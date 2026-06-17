@@ -1,121 +1,134 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-一键打包脚本 - 将 GUI 版本打包为 EXE
+使用 PyInstaller 打包 APK Resigner 为单文件 EXE
+包含所有 _tools/ 依赖
 """
 
 import os
 import sys
+import shutil
 import subprocess
 from pathlib import Path
 
+# 配置
+APP_NAME = "APK签名替换工具"
+MAIN_SCRIPT = "apk_resigner_gui.py"
+ICON_FILE = None  # 如果有图标文件，请指定路径
+
+
 def check_pyinstaller():
     """检查 PyInstaller 是否安装"""
-    try:
-        import PyInstaller
-        return True
-    except ImportError:
-        return False
+    if shutil.which("pyinstaller"):
+        return "pyinstaller"
 
-def install_pyinstaller():
-    """安装 PyInstaller"""
-    print("[+] 正在安装 PyInstaller...")
-    result = subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], 
+    # 尝试通过 Python 调用
+    result = subprocess.run([sys.executable, "-m", "PyInstaller", "--version"],
                           capture_output=True, text=True)
     if result.returncode == 0:
-        print("[✓] PyInstaller 安装成功")
-        return True
-    else:
-        print(f"[✗] 安装失败: {result.stderr}")
-        return False
+        return f"{sys.executable} -m PyInstaller"
 
-def build_exe():
+    print("[✗] PyInstaller 未安装")
+    print("    请运行: pip install pyinstaller")
+    return None
+
+
+def build():
     """执行打包"""
-    script_dir = Path(__file__).parent
-    gui_script = script_dir / "apk_resigner_gui.py"
+    print("="*50)
+    print("APK Resigner - PyInstaller 打包")
+    print("="*50)
 
-    if not gui_script.exists():
-        print(f"[✗] 找不到 GUI 脚本: {gui_script}")
-        print("请确保 build_exe.py 和 apk_resigner_gui.py 在同一目录")
-        return False
+    # 检查 PyInstaller
+    pyinst = check_pyinstaller()
+    if not pyinst:
+        return 1
 
-    print("="*60)
-    print("APK 签名替换工具 - EXE 打包")
-    print("="*60)
-    print()
+    print(f"[+] PyInstaller: {pyinst}")
 
-    # 选择打包模式
-    print("选择打包模式:")
-    print("  1. 单文件 EXE（推荐，便携）")
-    print("  2. 目录式 EXE（启动快）")
-    print("  3. 调试版（带控制台窗口）")
-    print()
+    # 检查主脚本
+    if not Path(MAIN_SCRIPT).exists():
+        print(f"[✗] 未找到 {MAIN_SCRIPT}")
+        return 1
 
-    choice = input("请输入选项 (1-3): ").strip()
-
-    if choice == "1":
-        mode = ["--onefile", "--windowed"]
-        name = "APK签名替换工具"
-    elif choice == "2":
-        mode = ["--windowed"]
-        name = "APK签名替换工具"
-    elif choice == "3":
-        mode = ["--onefile"]
-        name = "APK签名替换工具-Debug"
+    # 检查 _tools 目录（可选，纯 Python 模式不需要）
+    tools_dir = Path("_tools")
+    if tools_dir.exists() and any(tools_dir.iterdir()):
+        print("[+] _tools/ 目录已找到，将打包内置工具")
+        add_data = f"_tools{os.pathsep}_tools"
     else:
-        print("[✗] 无效选项")
-        return False
+        print("[!] _tools/ 目录为空，将使用纯 Python 模式（无需外部工具）")
+        add_data = None
 
-    # 构建命令
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm",
-        *mode,
-        "--name", name,
-        "--clean",
-        str(gui_script)
+    # 清理旧构建
+    for d in ["build", "dist"]:
+        if Path(d).exists():
+            print(f"[*] 清理 {d}/")
+            shutil.rmtree(d)
+
+    # 构建参数
+    cmd = pyinst.split() if " " in pyinst else [pyinst]
+    cmd += [
+        "--onefile",           # 单文件
+        "--windowed",          # GUI 模式（不显示控制台）
+        "--name", APP_NAME,
+        "--clean",             # 清理缓存
+        "--noconfirm",         # 不确认覆盖
     ]
 
-    print(f"[+] 执行命令: {' '.join(cmd)}")
-    print(f"[+] 开始打包，请稍候...")
-    print()
+    # 隐藏导入（tkinter 相关 + cryptography 相关）
+    cmd += [
+        "--hidden-import", "tkinter",
+        "--hidden-import", "tkinter.filedialog",
+        "--hidden-import", "tkinter.messagebox",
+        "--hidden-import", "tkinter.scrolledtext",
+        "--hidden-import", "pure_python_sign",
+        "--hidden-import", "cryptography",
+        "--hidden-import", "cryptography.x509",
+        "--hidden-import", "cryptography.x509.oid",
+        "--hidden-import", "cryptography.hazmat.primitives",
+        "--hidden-import", "cryptography.hazmat.primitives.hashes",
+        "--hidden-import", "cryptography.hazmat.primitives.serialization",
+        "--hidden-import", "cryptography.hazmat.primitives.asymmetric.rsa",
+        "--hidden-import", "cryptography.hazmat.primitives.asymmetric.padding",
+        "--hidden-import", "cryptography.hazmat.primitives.serialization.pkcs7",
+    ]
 
-    result = subprocess.run(cmd, cwd=script_dir)
+    # 添加 _tools 数据
+    if add_data:
+        cmd += ["--add-data", add_data]
+
+    # 图标
+    if ICON_FILE and Path(ICON_FILE).exists():
+        cmd += ["--icon", ICON_FILE]
+
+    # 主脚本
+    cmd.append(MAIN_SCRIPT)
+
+    print(f"\n[+] 执行命令:")
+    print(f"    {' '.join(cmd)}\n")
+
+    result = subprocess.run(cmd)
 
     if result.returncode == 0:
-        print()
-        print("="*60)
-        print("[✓] 打包成功！")
-        print("="*60)
-        print(f"\n输出位置:")
-        print(f"  {script_dir / 'dist' / name}")
-        if choice == "1":
-            print(f"  文件: {script_dir / 'dist' / (name + '.exe')}")
-        print()
-        print("提示:")
-        print("  - 运行需要 apktool, zipalign, apksigner, keytool 在 PATH 中")
-        print("  - 首次启动可能较慢（单文件模式需要解压）")
-        return True
-    else:
-        print()
-        print("[✗] 打包失败，请检查错误信息")
-        return False
+        exe_path = Path("dist") / f"{APP_NAME}.exe"
+        if exe_path.exists():
+            size_mb = exe_path.stat().st_size / (1024 * 1024)
+            print(f"\n[OK] Build successful!")
+            print(f"    Output: {exe_path.absolute()}")
+            print(f"    Size: {size_mb:.1f} MB")
+            print(f"\n[*] Pure Python mode: no JDK/Android SDK needed")
+            print(f"[*] Supported: quick sign replace / V1 sign / verify")
+            print(f"[*] For full features (decompile/modify), add tools to _tools/ and rebuild")
+            return 0
+
+    print(f"\n[FAIL] Build failed")
+    return 1
+
 
 def main():
-    if not check_pyinstaller():
-        print("PyInstaller 未安装")
-        install = input("是否自动安装? (y/n): ").strip().lower()
-        if install == 'y':
-            if not install_pyinstaller():
-                sys.exit(1)
-        else:
-            print("请手动安装: pip install pyinstaller")
-            sys.exit(1)
+    return build()
 
-    build_exe()
 
-    print()
-    input("按回车键退出...")
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())
