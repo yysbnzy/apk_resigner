@@ -36,14 +36,61 @@ class ToolCollector:
     def success(self, msg):
         print(f"[OK] {msg}")
 
-    # ========== 1. 下载 apktool ==========
+    # ========== 1. 收集 apktool ==========
     def download_apktool(self):
         target = self.tools_dir / "apktool.jar"
+
+        # 1. 检查是否已存在
         if target.exists():
             self.success(f"apktool.jar already exists ({target.stat().st_size/1024/1024:.1f}MB)")
             return True
 
-        self.log("Downloading apktool.jar...")
+        # 2. 优先从本地查找已安装的 apktool
+        self.log("Searching for local apktool...")
+        local_apktool = shutil.which("apktool")
+        if local_apktool:
+            # 如果是 wrapper 脚本，查找同目录的 jar
+            apktool_path = Path(local_apktool)
+            if apktool_path.suffix == '.bat':
+                # Windows wrapper: 查找 apktool.jar 在同级目录或上级目录
+                jar_candidates = [
+                    apktool_path.parent / "apktool.jar",
+                    apktool_path.parent.parent / "apktool.jar",
+                ]
+                for jar in jar_candidates:
+                    if jar.exists():
+                        shutil.copy2(jar, target)
+                        self.success(f"Copied apktool.jar from {jar}")
+                        return True
+            else:
+                # Linux/Mac: 查找 jar 在 lib 目录
+                jar_candidates = [
+                    apktool_path.parent / "apktool.jar",
+                    apktool_path.parent.parent / "lib" / "apktool.jar",
+                ]
+                for jar in jar_candidates:
+                    if jar.exists():
+                        shutil.copy2(jar, target)
+                        self.success(f"Copied apktool.jar from {jar}")
+                        return True
+
+        # 3. 常见安装路径查找
+        search_paths = [
+            Path("C:/") / "apktool" / "apktool.jar",
+            Path("C:/") / "Program Files" / "apktool" / "apktool.jar",
+            Path("C:/") / "Tools" / "apktool" / "apktool.jar",
+            Path.home() / "apktool" / "apktool.jar",
+            Path.home() / "tools" / "apktool" / "apktool.jar",
+            Path.home() / "Downloads" / "apktool.jar",
+        ]
+        for p in search_paths:
+            if p.exists():
+                shutil.copy2(p, target)
+                self.success(f"Copied apktool.jar from {p}")
+                return True
+
+        # 4. 最后尝试在线下载
+        self.log("Local apktool not found, downloading...")
         urls = [
             "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
         ]
@@ -58,9 +105,9 @@ class ToolCollector:
                 self.warn(f"Failed: {e}")
                 continue
 
-        self.error("apktool.jar download failed!")
-        self.error("Please download manually from https://apktool.org/docs/install/")
-        self.error("And place it in _tools/apktool.jar")
+        self.error("apktool.jar not found!")
+        self.error("Please install apktool or place apktool.jar in _tools/")
+        self.error("Download: https://apktool.org/docs/install/")
         self.missing.append("apktool.jar")
         return False
 
