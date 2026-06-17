@@ -84,7 +84,8 @@ class QuickSignReplacer:
         print(f"[✓] 对齐完成: {output_apk}")
         return output_apk
 
-    def sign_apk(self, apk_path, keystore_path, alias="testkey", password="123456"):
+    def sign_apk(self, apk_path, keystore_path, alias="testkey", password="123456",
+                 v1_only=False):
         """签名 APK"""
         apk_path = Path(apk_path)
         keystore_path = Path(keystore_path)
@@ -92,6 +93,9 @@ class QuickSignReplacer:
         if not keystore_path.exists():
             print(f"[错误] 密钥库不存在: {keystore_path}")
             return False
+
+        if v1_only:
+            return self._sign_v1(apk_path, keystore_path, alias, password)
 
         print(f"[+] 签名 APK: {apk_path}")
 
@@ -111,6 +115,34 @@ class QuickSignReplacer:
             return False
 
         print(f"[✓] 签名完成")
+        return True
+
+    def _sign_v1(self, apk_path, keystore_path, alias="testkey", password="123456"):
+        """使用 jarsigner 进行 V1 (JAR) 签名"""
+        apk_path = Path(apk_path)
+        keystore_path = Path(keystore_path)
+
+        print(f"[+] V1 签名 APK (jarsigner): {apk_path}")
+        print(f"    ⚠️  V1 签名仅含 JAR 签名，Android 7.0+ 可能拒绝安装")
+
+        cmd = [
+            'jarsigner', '-verbose',
+            '-sigalg', 'SHA256withRSA',
+            '-digestalg', 'SHA-256',
+            '-keystore', str(keystore_path),
+            '-storepass', password,
+            '-keypass', password,
+            str(apk_path),
+            alias
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"[错误] V1 签名失败: {result.stderr}")
+            return False
+
+        print(f"[✓] V1 签名完成")
         return True
 
     def generate_keystore(self, keystore_path, alias="testkey", password="123456"):
@@ -138,7 +170,7 @@ class QuickSignReplacer:
             return False
 
     def quick_replace(self, original_apk, keystore_path=None, alias="testkey", 
-                     password="123456"):
+                     password="123456", v1_only=False):
         """快速替换签名流程"""
         original_apk = Path(original_apk)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,7 +195,7 @@ class QuickSignReplacer:
             return None
 
         # 5. 签名
-        if not self.sign_apk(aligned_apk, keystore_path, alias, password):
+        if not self.sign_apk(aligned_apk, keystore_path, alias, password, v1_only=v1_only):
             return None
 
         # 6. 输出最终文件
@@ -173,6 +205,11 @@ class QuickSignReplacer:
         print(f"\n[✓] 快速签名替换完成！")
         print(f"    最终 APK: {final_apk}")
         print(f"    密钥库: {keystore_path}")
+
+        if v1_only:
+            print(f"\n⚠️  注意：此 APK 仅含 V1 签名")
+            print(f"    - Android 5.0-6.0: 可能安装成功")
+            print(f"    - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）")
 
         # 对比信息
         print(f"\n[+] 签名对比:")
@@ -198,6 +235,9 @@ def main():
   # 使用已有密钥库
   python quick_sign_replace.py -i original.apk -k my.keystore -p mypassword
 
+  # 仅使用 V1 签名
+  python quick_sign_replace.py -i original.apk --v1-only
+
 与完整工具的区别:
   - 不解包反编译，不修改 APK 内容
   - 仅去除原签名 + 重新签名
@@ -210,6 +250,8 @@ def main():
     parser.add_argument('-a', '--alias', default='testkey', help='密钥别名')
     parser.add_argument('-p', '--password', default='123456', help='密钥库密码')
     parser.add_argument('-w', '--work-dir', default='./apk_work', help='工作目录')
+    parser.add_argument('--v1-only', action='store_true',
+                       help='仅使用 V1 签名（jarsigner），不添加 v2/v3 签名块')
 
     args = parser.parse_args()
 
@@ -218,7 +260,8 @@ def main():
         args.input,
         args.keystore,
         args.alias,
-        args.password
+        args.password,
+        v1_only=args.v1_only
     )
 
     if final_apk:
