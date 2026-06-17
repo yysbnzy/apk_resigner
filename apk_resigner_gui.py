@@ -416,10 +416,17 @@ class APKResignerGUI:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        # 诊断：显示工作目录和工具路径
+        self.log(f"  工作目录: {path.parent}", "INFO")
+        self.log(f"  目标文件: {path}", "INFO")
+
         cmd = self.tools.get_cmd('keytool')
         if not cmd:
             self.log("❌ keytool 不可用", "ERROR")
             raise RuntimeError("keytool 不可用")
+
+        # 诊断：显示完整命令
+        self.log(f"  keytool 路径: {cmd[0]}", "INFO")
 
         # 使用 -keypass 和 -storepass 参数，避免交互式输入
         cmd += [
@@ -432,37 +439,57 @@ class APKResignerGUI:
             '-dname', 'CN=Test, OU=Test, O=Test, L=Test, ST=Test, C=CN',
             '-storepass', self.password.get(),
             '-keypass', self.password.get(),
-            '-noprompt'  # 非交互模式
+            '-noprompt'
         ]
 
-        self.log(f"  执行: {' '.join(cmd)}")
+        self.log(f"  执行命令: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        if result.returncode == 0:
-            self.log(f"  ✓ 密钥库生成成功", "SUCCESS")
-            if path.exists():
-                self.log(f"  文件大小: {path.stat().st_size} bytes", "INFO")
-            else:
-                self.log(f"  ⚠ 文件未找到: {path}", "WARNING")
+        # 诊断：显示完整输出
+        self.log(f"  返回码: {result.returncode}", "INFO")
+        if result.stdout:
+            self.log(f"  stdout: {result.stdout[:500]}", "INFO")
+        if result.stderr:
+            self.log(f"  stderr: {result.stderr[:500]}", "INFO")
+
+        if result.returncode == 0 and path.exists():
+            self.log(f"  ✓ 密钥库生成成功 ({path.stat().st_size} bytes)", "SUCCESS")
         else:
-            self.log(f"  ✗ keytool 失败: {result.stderr}", "ERROR")
-            self.log(f"  stdout: {result.stdout}", "ERROR")
-            raise RuntimeError(f"密钥库生成失败: {result.stderr}")
+            self.log(f"  ✗ 密钥库生成失败", "ERROR")
+            if not path.exists():
+                self.log(f"  文件不存在: {path}", "ERROR")
+            raise RuntimeError(f"密钥库生成失败: rc={result.returncode}")
 
     def _decompile(self, apk, out_dir):
         self.log(f"[+] 反编译 APK...")
         if out_dir.exists():
             shutil.rmtree(out_dir)
+
         cmd = self.tools.get_cmd('apktool')
         if not cmd:
+            self.log("❌ apktool 不可用", "ERROR")
             raise RuntimeError("apktool 不可用")
+
+        # 诊断：显示 apktool 调用方式
+        self.log(f"  apktool 命令: {' '.join(cmd)}", "INFO")
+
         cmd += ['d', '-f', '-o', str(out_dir), str(apk)]
+        self.log(f"  完整命令: {' '.join(cmd)}")
+
         result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # 诊断：显示完整输出
+        self.log(f"  返回码: {result.returncode}", "INFO")
+        if result.stdout:
+            self.log(f"  stdout: {result.stdout[:500]}", "INFO")
+        if result.stderr:
+            self.log(f"  stderr: {result.stderr[:500]}", "INFO")
+
         if result.returncode == 0:
             self.log(f"  ✓ 反编译完成", "SUCCESS")
         else:
-            self.log(f"  ✗ 失败: {result.stderr}", "ERROR")
-            raise RuntimeError("反编译失败")
+            self.log(f"  ✗ 反编译失败", "ERROR")
+            raise RuntimeError(f"反编译失败: rc={result.returncode}")
 
     def _modify_manifest(self, decompiled_dir):
         self.log(f"[+] 修改 AndroidManifest.xml...")
