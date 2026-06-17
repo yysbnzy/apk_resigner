@@ -23,6 +23,8 @@ except ImportError:
     import Tkinter as tk
     from Tkinter import ttk, filedialog, messagebox, scrolledtext
 
+from pure_python_sign import PurePythonAPKSigner
+
 
 class ToolManager:
     """管理工具路径，优先使用内置工具"""
@@ -187,6 +189,8 @@ class APKResignerGUI:
 
         # 工具管理器
         self.tools = ToolManager()
+        self.pure_python = PurePythonAPKSigner(str(self.work_dir))
+        self.pure_python_mode = False
 
         self.build_ui()
         self.log(self.tools.get_info(), "INFO")
@@ -194,8 +198,11 @@ class APKResignerGUI:
         missing = self.tools.check_all()
         if missing:
             self.log(f"\n⚠️ 缺少必需工具: {', '.join(missing)}", "WARNING")
-            self.log("请将缺失工具放入 _tools/ 目录，或安装到系统 PATH", "WARNING")
-            self.status_var.set(f"缺少: {', '.join(missing)}")
+            self.log("纯 Python 模式已启用：快速签名 / V1 签名可用，无需 JDK/Android SDK", "INFO")
+            self.pure_python_mode = True
+            self.status_var.set(f"纯 Python 模式 (缺少: {', '.join(missing)})")
+            # 禁用完整流程按钮（需要 apktool）
+            self.btn_full.config(state="disabled")
         else:
             self.status_var.set("就绪 (全部内置)")
 
@@ -389,6 +396,22 @@ class APKResignerGUI:
         self.root.after(0, lambda: messagebox.showinfo("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n密钥库:\n{keystore}"))
 
     def _quick_replace(self, apk):
+        if self.pure_python_mode:
+            self.log("="*50, "INFO")
+            self.log("纯 Python 快速签名模式", "INFO")
+            self.log("="*50, "INFO")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            keystore = self.work_dir / f"test_key_{timestamp}.pem"
+            self.pure_python.generate_keystore(keystore, self.alias.get())
+            final = self.pure_python.quick_replace(apk, keystore, self.alias.get())
+            if final:
+                self.log(f"\n✅ 纯 Python 签名完成！", "SUCCESS")
+                self.log(f"📦 最终 APK: {final}", "SUCCESS")
+                self.log(f"🔑 密钥: {keystore}", "INFO")
+                self._compare_signatures(apk, final)
+                self.root.after(0, lambda: messagebox.showinfo("完成", f"纯 Python 签名完成！\n\n最终 APK:\n{final}\n\n密钥:\n{keystore}"))
+            return
+
         self.log("="*50, "INFO")
         self.log("开始仅修改签名流程", "INFO")
         self.log("="*50, "INFO")
@@ -602,6 +625,27 @@ class APKResignerGUI:
 
     def _v1_sign_only(self, apk):
         """仅使用 V1 签名（JAR 签名），不添加 v2/v3 签名块"""
+        if self.pure_python_mode:
+            self.log("="*50, "INFO")
+            self.log("纯 Python V1 签名模式", "INFO")
+            self.log("="*50, "INFO")
+            self.log("⚠️ V1 签名仅兼容 Android 5.0-6.0，Android 7.0+ 会拒绝安装！", "WARNING")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            keystore = self.work_dir / f"test_key_{timestamp}.pem"
+            self.pure_python.generate_keystore(keystore, self.alias.get())
+            final = self.pure_python.quick_replace(apk, keystore, self.alias.get())
+            if final:
+                self.log(f"\n✅ V1 签名完成！", "SUCCESS")
+                self.log(f"📦 最终 APK: {final}", "SUCCESS")
+                self.log(f"🔑 密钥: {keystore}", "INFO")
+                self._compare_signatures(apk, final)
+                self.log(f"\n⚠️ 注意：此 APK 仅含 V1 签名", "WARNING")
+                self.log(f"  - Android 5.0-6.0: 可能安装成功", "INFO")
+                self.log(f"  - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）", "INFO")
+                self.log(f"  - 可用于测试系统对 v1-only APK 的拦截能力", "INFO")
+                self.root.after(0, lambda: messagebox.showinfo("完成", f"V1 签名完成！\n\n最终 APK:\n{final}\n\n注意：仅含 V1 签名，Android 7.0+ 会拒绝安装"))
+            return
+
         self.log("="*50, "INFO")
         self.log("开始仅使用 V1 签名流程", "INFO")
         self.log("="*50, "INFO")
