@@ -600,7 +600,7 @@ class APKResignerGUI:
             self.log(f"  ✗ 签名失败: {result.stderr}", "ERROR")
             raise RuntimeError("签名失败")
 
-        def _v1_sign_only(self, apk):
+    def _v1_sign_only(self, apk):
         """仅使用 V1 签名（JAR 签名），不添加 v2/v3 签名块"""
         self.log("="*50, "INFO")
         self.log("开始仅使用 V1 签名流程", "INFO")
@@ -632,24 +632,17 @@ class APKResignerGUI:
         final = self.work_dir / f"v1_signed_{Path(apk).stem}_{timestamp}.apk"
         shutil.copy(aligned, final)
 
-        self.log(f"
-✅ V1 签名完成！", "SUCCESS")
+        self.log(f"\n✅ V1 签名完成！", "SUCCESS")
         self.log(f"📦 最终 APK: {final}", "SUCCESS")
         self.log(f"🔑 密钥库: {keystore}", "INFO")
         self._compare_signatures(apk, final)
 
-        self.log(f"
-⚠️ 注意：此 APK 仅含 V1 签名", "WARNING")
+        self.log(f"\n⚠️ 注意：此 APK 仅含 V1 签名", "WARNING")
         self.log(f"  - Android 5.0-6.0: 可能安装成功", "INFO")
         self.log(f"  - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）", "INFO")
         self.log(f"  - 可用于测试系统对 v1-only APK 的拦截能力", "INFO")
 
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"V1 签名完成！
-
-最终 APK:
-{final}
-
-注意：仅含 V1 签名，Android 7.0+ 会拒绝安装"))
+        self.root.after(0, lambda: messagebox.showinfo("完成", f"V1 签名完成！\n\n最终 APK:\n{final}\n\n注意：仅含 V1 签名，Android 7.0+ 会拒绝安装"))
 
     def _sign_v1(self, apk_path, keystore):
         """使用 jarsigner 进行 V1 (JAR) 签名"""
