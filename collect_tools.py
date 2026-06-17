@@ -233,6 +233,33 @@ class ToolCollector:
                 size = sum(f.stat().st_size for f in dst.rglob('*') if f.is_file())
                 self.success(f"  Copied: {dname}/ ({size/1024/1024:.1f}MB)")
 
+        # 复制 VC++ 运行时 DLL（Windows 必需，否则 keytool 报 0xC0000135）
+        self.log("Copying VC++ runtime DLLs...")
+        dll_names = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", 
+                     "msvcp140_1.dll", "msvcp140_2.dll"]
+
+        # 从 JDK bin 目录复制
+        jdk_bin = jdk_root / "bin"
+        java_bin = target_java / "bin"
+
+        for dll_name in dll_names:
+            src = jdk_bin / dll_name
+            if src.exists():
+                shutil.copy2(src, java_bin / dll_name)
+                self.success(f"  Copied: {dll_name} (from JDK)")
+            else:
+                # 尝试从系统目录复制
+                sys_paths = [
+                    Path("C:/Windows/System32"),
+                    Path("C:/Windows/SysWOW64"),
+                ]
+                for sys_path in sys_paths:
+                    sys_dll = sys_path / dll_name
+                    if sys_dll.exists():
+                        shutil.copy2(sys_dll, java_bin / dll_name)
+                        self.success(f"  Copied: {dll_name} (from {sys_path})")
+                        break
+
     # ========== 4. 收集 adb (可选) ==========
     def collect_adb(self):
         self.log("Searching for adb (optional)...")
