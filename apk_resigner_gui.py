@@ -183,6 +183,7 @@ class APKResignerGUI:
         self.modify_manifest = tk.BooleanVar(value=True)
         self.modify_smali = tk.BooleanVar(value=False)
         self.auto_generate_key = tk.BooleanVar(value=True)
+        self.v1_only = tk.BooleanVar(value=False)
 
         # 工具管理器
         self.tools = ToolManager()
@@ -245,15 +246,19 @@ class APKResignerGUI:
 
         ttk.Checkbutton(modify_frame, text="修改 AndroidManifest.xml（添加 [MODIFIED] 标记）", variable=self.modify_manifest).grid(row=0, column=0, sticky=tk.W, padx=5)
         ttk.Checkbutton(modify_frame, text="修改 smali 代码（添加完整性测试标记）", variable=self.modify_smali).grid(row=1, column=0, sticky=tk.W, padx=5)
+        ttk.Checkbutton(modify_frame, text="仅使用 V1 签名（测试旧版兼容性）", variable=self.v1_only).grid(row=2, column=0, sticky=tk.W, padx=5)
 
         btn_frame = ttk.Frame(main_frame)
         btn_frame.grid(row=5, column=0, columnspan=3, pady=10)
 
-        self.btn_full = ttk.Button(btn_frame, text="🔧 修改内容和签名", command=lambda: self.run_task("full"), width=25)
+        self.btn_full = ttk.Button(btn_frame, text="🔧 修改内容和签名", command=lambda: self.run_task("full"), width=20)
         self.btn_full.pack(side=tk.LEFT, padx=5)
 
-        self.btn_quick = ttk.Button(btn_frame, text="⚡ 仅修改签名", command=lambda: self.run_task("quick"), width=25)
+        self.btn_quick = ttk.Button(btn_frame, text="⚡ 仅修改签名", command=lambda: self.run_task("quick"), width=20)
         self.btn_quick.pack(side=tk.LEFT, padx=5)
+
+        self.btn_v1 = ttk.Button(btn_frame, text="📜 仅使用V1签名", command=lambda: self.run_task("v1"), width=20)
+        self.btn_v1.pack(side=tk.LEFT, padx=5)
 
         self.btn_verify = ttk.Button(btn_frame, text="🔍 验证签名", command=self.verify_apk, width=15)
         self.btn_verify.pack(side=tk.LEFT, padx=5)
@@ -306,6 +311,7 @@ class APKResignerGUI:
     def set_buttons_state(self, state):
         self.btn_full.config(state=state)
         self.btn_quick.config(state=state)
+        self.btn_v1.config(state=state)
         self.btn_verify.config(state=state)
 
     def run_task(self, task_type):
@@ -330,6 +336,8 @@ class APKResignerGUI:
                 self._full_process(apk)
             elif task_type == "quick":
                 self._quick_replace(apk)
+            elif task_type == "v1":
+                self._v1_sign_only(apk)
         except Exception as e:
             self.log(f"❌ 执行出错: {str(e)}", "ERROR")
         finally:
@@ -591,6 +599,98 @@ class APKResignerGUI:
         else:
             self.log(f"  ✗ 签名失败: {result.stderr}", "ERROR")
             raise RuntimeError("签名失败")
+
+        def _v1_sign_only(self, apk):
+        """仅使用 V1 签名（JAR 签名），不添加 v2/v3 签名块"""
+        self.log("="*50, "INFO")
+        self.log("开始仅使用 V1 签名流程", "INFO")
+        self.log("="*50, "INFO")
+        self.log("⚠️ V1 签名仅兼容 Android 5.0-6.0，Android 7.0+ 会拒绝安装！", "WARNING")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if self.auto_generate_key.get():
+            keystore = self.work_dir / f"test_keystore_{timestamp}.jks"
+            self._generate_keystore(keystore)
+        else:
+            keystore = Path(self.keystore_path.get())
+
+        # 去除原签名
+        stripped = self.work_dir / f"stripped_{timestamp}"
+        self._strip_signature(apk, stripped)
+
+        # 重新打包
+        unsigned = self.work_dir / f"unsigned_{timestamp}.apk"
+        self._repack_zip(stripped, unsigned)
+
+        # V1 签名不需要 zipalign，但最好对齐
+        aligned = self.work_dir / f"aligned_{timestamp}.apk"
+        self._zipalign(unsigned, aligned)
+
+        # 使用 jarsigner 进行 V1 签名
+        self._sign_v1(apk_path=aligned, keystore=keystore)
+
+        final = self.work_dir / f"v1_signed_{Path(apk).stem}_{timestamp}.apk"
+        shutil.copy(aligned, final)
+
+        self.log(f"
+✅ V1 签名完成！", "SUCCESS")
+        self.log(f"📦 最终 APK: {final}", "SUCCESS")
+        self.log(f"🔑 密钥库: {keystore}", "INFO")
+        self._compare_signatures(apk, final)
+
+        self.log(f"
+⚠️ 注意：此 APK 仅含 V1 签名", "WARNING")
+        self.log(f"  - Android 5.0-6.0: 可能安装成功", "INFO")
+        self.log(f"  - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）", "INFO")
+        self.log(f"  - 可用于测试系统对 v1-only APK 的拦截能力", "INFO")
+
+        self.root.after(0, lambda: messagebox.showinfo("完成", f"V1 签名完成！
+
+最终 APK:
+{final}
+
+注意：仅含 V1 签名，Android 7.0+ 会拒绝安装"))
+
+    def _sign_v1(self, apk_path, keystore):
+        """使用 jarsigner 进行 V1 (JAR) 签名"""
+        self.log(f"[+] V1 签名 APK (jarsigner)...")
+
+        cmd = self.tools.get_cmd('jarsigner')
+        if not cmd:
+            # 回退到 keytool + java 组合
+            java = self.tools.get_cmd('java')
+            if java:
+                cmd = java
+            else:
+                self.log("❌ jarsigner 和 java 都不可用", "ERROR")
+                raise RuntimeError("无法进行 V1 签名")
+
+        # 如果使用 java 命令，需要指定 jarsigner 的完整路径
+        if cmd[0].endswith('java.exe') or cmd[0].endswith('java'):
+            jarsigner_path = Path(cmd[0]).parent / "jarsigner"
+            if not jarsigner_path.exists():
+                jarsigner_path = Path(cmd[0]).parent / "jarsigner.exe"
+            cmd = [str(jarsigner_path)]
+
+        cmd += [
+            '-verbose',
+            '-sigalg', 'SHA256withRSA',
+            '-digestalg', 'SHA-256',
+            '-keystore', str(keystore),
+            '-storepass', self.password.get(),
+            '-keypass', self.password.get(),
+            str(apk_path),
+            self.alias.get()
+        ]
+
+        self.log(f"  执行: {' '.join(cmd[:5])} ...")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0:
+            self.log(f"  ✓ V1 签名完成", "SUCCESS")
+        else:
+            self.log(f"  ✗ V1 签名失败: {result.stderr}", "ERROR")
+            raise RuntimeError(f"V1 签名失败: {result.stderr}")
 
     def _compare_signatures(self, original, modified):
         self.log(f"\n[+] 签名对比:", "INFO")
