@@ -217,7 +217,9 @@ class APKResignerGUI:
         title_label.grid(row=0, column=0, columnspan=3, pady=(0, 5))
 
         subtitle = ttk.Label(main_frame, text="内置依赖，无需安装 Android SDK / JDK", font=("Microsoft YaHei", 9), foreground="gray")
-        subtitle.grid(row=1, column=0, columnspan=3, pady=(0, 15))
+        subtitle.grid(row=1, column=0, columnspan=2, pady=(0, 15), sticky=tk.W)
+
+        ttk.Button(main_frame, text="❓ 使用说明", command=self.show_help, width=12).grid(row=1, column=2, pady=(0, 15), sticky=tk.E)
 
         file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
         file_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
@@ -763,6 +765,89 @@ class APKResignerGUI:
                 self.log(f"  ✓ zipalign 对齐正常", "SUCCESS")
             else:
                 self.log(f"  ⚠ zipalign 可能有问题", "WARNING")
+
+    def show_help(self):
+        """显示使用说明弹窗"""
+        help_win = tk.Toplevel(self.root)
+        help_win.title("使用说明")
+        help_win.geometry("700x550")
+        help_win.transient(self.root)
+        help_win.grab_set()
+
+        text = scrolledtext.ScrolledText(help_win, wrap=tk.WORD, font=("Microsoft YaHei", 10), padx=10, pady=10)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.tag_config("title", font=("Microsoft YaHei", 12, "bold"))
+        text.tag_config("heading", font=("Microsoft YaHei", 10, "bold"), foreground="blue")
+        text.tag_config("warning", foreground="red")
+        text.tag_config("note", foreground="gray")
+
+        content = """
+【工具简介】
+本工具用于 APK 签名替换测试，支持完整流程修改和快速签名替换。
+
+═══════════════════════════════════════════════════
+
+【四个按钮说明】
+
+🔧 修改内容和签名（完整流程）
+  流程：反编译 APK → 修改内容 → 重打包 → zipalign → 签名
+  修改选项：
+    • AndroidManifest.xml（添加 [MODIFIED] 标记）
+    • smali 代码（添加测试标记）
+  签名方案：v2+v3+v4（默认）
+  用途：测试 APK 完整性校验（内容+签名都被改）
+  ⚠ 需要内置工具：apktool + zipalign + apksigner
+
+⚡ 仅修改签名（快速流程）
+  流程：去除原签名 → 重新打包 → zipalign → 签名
+  特点：不改 APK 内容，只替换签名
+  签名方案：v2+v3+v4（默认）
+  用途：测试纯签名校验逻辑
+  ✅ 纯 Python 模式可用
+
+📜 仅使用 V1 签名
+  流程：去除原签名 → 重新打包 → V1 (JAR) 签名
+  特点：仅含 V1 签名，不含 v2/v3/v4 签名块
+  用途：测试旧版兼容性或 Android 7.0+ 拦截效果
+  ✅ 纯 Python 模式可用
+
+🔍 验证签名
+  功能：检查 APK 的签名状态和对齐情况
+  输出：v1/v2/v3 签名是否存在 + zipalign 对齐状态
+  不生成新 APK
+
+═══════════════════════════════════════════════════
+
+【签名方案对比】
+
+  特性      V1 (JAR)        V2/V3/V4
+  ─────────────────────────────────────
+  Android 5-6  ✅ 支持       ✅ 支持
+  Android 7+   ❌ 拒绝安装   ✅ 支持
+  安全性       低            高
+  速度         慢            快
+
+═══════════════════════════════════════════════════
+
+【纯 Python 模式】
+当系统未安装 JDK / Android SDK 时，工具自动切换到纯 Python 模式：
+  ✅ 快速签名替换（⚡）
+  ✅ V1 签名（📜）
+  ⏸ 完整流程（🔧）— 需手动添加工具到 _tools/ 目录
+
+═══════════════════════════════════════════════════
+
+【输出目录】
+生成 APK 保存在：%USERPROFILE%\\apk_resign_work\\
+
+【安全提示】
+本工具仅用于测试和学习，请勿用于非法用途。
+替换签名后的 APK 无法通过原开发者签名校验。
+"""
+        text.insert(tk.END, content)
+        text.config(state=tk.DISABLED)
+
+        ttk.Button(help_win, text="关闭", command=help_win.destroy).pack(pady=10)
 
 
 def main():
