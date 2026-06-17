@@ -413,16 +413,41 @@ class APKResignerGUI:
 
     def _generate_keystore(self, path):
         self.log(f"[+] 生成测试密钥库: {path.name}")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
         cmd = self.tools.get_cmd('keytool')
         if not cmd:
             self.log("❌ keytool 不可用", "ERROR")
             raise RuntimeError("keytool 不可用")
-        cmd += ['-genkey', '-v', '-keystore', str(path), '-alias', self.alias.get(), '-keyalg', 'RSA', '-keysize', '2048', '-validity', '36500', '-dname', 'CN=Test, OU=Test, O=Test, L=Test, ST=Test, C=CN', '-storepass', self.password.get(), '-keypass', self.password.get()]
-        result = subprocess.run(cmd, capture_output=True, text=True, input=f"{self.password.get()}\n")
+
+        # 使用 -keypass 和 -storepass 参数，避免交互式输入
+        cmd += [
+            '-genkey', '-v',
+            '-keystore', str(path),
+            '-alias', self.alias.get(),
+            '-keyalg', 'RSA',
+            '-keysize', '2048',
+            '-validity', '36500',
+            '-dname', 'CN=Test, OU=Test, O=Test, L=Test, ST=Test, C=CN',
+            '-storepass', self.password.get(),
+            '-keypass', self.password.get(),
+            '-noprompt'  # 非交互模式
+        ]
+
+        self.log(f"  执行: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
         if result.returncode == 0:
             self.log(f"  ✓ 密钥库生成成功", "SUCCESS")
+            if path.exists():
+                self.log(f"  文件大小: {path.stat().st_size} bytes", "INFO")
+            else:
+                self.log(f"  ⚠ 文件未找到: {path}", "WARNING")
         else:
-            self.log(f"  ⚠ keytool: {result.stderr}", "WARNING")
+            self.log(f"  ✗ keytool 失败: {result.stderr}", "ERROR")
+            self.log(f"  stdout: {result.stdout}", "ERROR")
+            raise RuntimeError(f"密钥库生成失败: {result.stderr}")
 
     def _decompile(self, apk, out_dir):
         self.log(f"[+] 反编译 APK...")
