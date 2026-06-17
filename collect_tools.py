@@ -284,18 +284,63 @@ class ToolCollector:
         total_size = sum(f.stat().st_size for f in self.tools_dir.rglob('*') if f.is_file())
         print(f"Total size: {total_size/1024/1024:.1f}MB")
         print()
-        print("Next step:")
-        print("  python build_portable.py")
-        print("  or")
-        print("  pyinstaller --noconfirm --onefile --windowed --name APKResigner --add-data '_tools;_tools' --clean apk_resigner_gui.py")
+        if self.missing:
+            print()
+            print("[WARNING] Some tools are missing. Please install them and re-run.")
+            print()
+            input("Press Enter to exit...")
+            return
+
+        # ========== 自动打包 EXE ==========
+        print()
+        print("="*60)
+        print("Starting PyInstaller build...")
+        print("="*60)
+        print()
+
+        import subprocess
+        import sys
+
+        cmd = [
+            sys.executable, "-m", "PyInstaller",
+            "--noconfirm",
+            "--onefile",
+            "--windowed",
+            "--name", "APKResigner",
+            "--add-data", "_tools;_tools",
+            "--clean",
+            str(self.project_dir / "apk_resigner_gui.py")
+        ]
+
+        print(f"Command: {' '.join(cmd)}")
+        print()
+
+        result = subprocess.run(cmd, cwd=self.project_dir)
+
+        if result.returncode == 0:
+            print()
+            print("="*60)
+            print("[OK] Build successful!")
+            print("="*60)
+            print()
+            print(f"Output: {self.project_dir / 'dist' / 'APKResigner.exe'}")
+            print()
+            print("You can now copy dist/APKResigner.exe to any Windows PC")
+            print("and run it without installing any dependencies.")
+        else:
+            print()
+            print("[ERROR] Build failed!")
+            print()
+            print("Try running manually:")
+            print("  pyinstaller --noconfirm --onefile --windowed --name APKResigner --add-data '_tools;_tools' --clean apk_resigner_gui.py")
+
+        print()
+        input("Press Enter to exit...")
 
 
 def main():
     collector = ToolCollector()
     collector.run()
-
-    print()
-    input("Press Enter to exit...")
 
 
 if __name__ == '__main__':
