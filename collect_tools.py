@@ -339,34 +339,64 @@ class ToolCollector:
         print(f"Tools:   {self.tools_dir}")
         print()
 
-        self.download_apktool()
-        self.collect_build_tools()
-        self.collect_jdk()
-        self.collect_adb()
-
-        print()
-        print("="*60)
-        if self.missing:
-            print(f"[WARNING] Missing: {', '.join(self.missing)}")
-            print("Please install missing tools and re-run this script")
+        # 检查 _tools 是否已存在且完整
+        if self._check_tools_ready():
+            print("[OK] _tools/ already exists with all required tools!")
+            print("     Skipping collection, proceeding to build...")
+            print()
         else:
-            print("[OK] All tools collected!")
-        print("="*60)
-        print()
+            self.download_apktool()
+            self.collect_build_tools()
+            self.collect_jdk()
+            self.collect_adb()
+
+            print()
+            print("="*60)
+            if self.missing:
+                print(f"[WARNING] Missing: {', '.join(self.missing)}")
+                print("Please install missing tools and re-run this script")
+            else:
+                print("[OK] All tools collected!")
+            print("="*60)
+            print()
+
+            if self.missing:
+                print()
+                print("[WARNING] Some tools are missing. Please install them and re-run.")
+                print()
+                input("Press Enter to exit...")
+                return
 
         # 显示收集结果
         total_size = sum(f.stat().st_size for f in self.tools_dir.rglob('*') if f.is_file())
         print(f"Total size: {total_size/1024/1024:.1f}MB")
         print()
-        if self.missing:
-            print()
-            print("[WARNING] Some tools are missing. Please install them and re-run.")
-            print()
-            input("Press Enter to exit...")
-            return
 
-        # ========== 自动打包 EXE ==========
-        print()
+        # 自动打包 EXE
+        self._build_exe()
+
+    def _check_tools_ready(self):
+        """检查 _tools 是否已包含所有必需工具"""
+        if not self.tools_dir.exists():
+            return False
+
+        required = {
+            'apktool': self.tools_dir / 'apktool.jar',
+            'zipalign': self.tools_dir / 'zipalign.exe',
+            'apksigner': self.tools_dir / 'apksigner.bat',
+            'keytool': self.tools_dir / 'java' / 'bin' / 'keytool.exe',
+            'java': self.tools_dir / 'java' / 'bin' / 'java.exe',
+        }
+
+        for name, path in required.items():
+            if not path.exists():
+                print(f"  [MISSING] {name}: {path}")
+                return False
+
+        return True
+
+    def _build_exe(self):
+        """执行 PyInstaller 打包"""
         print("="*60)
         print("Starting PyInstaller build...")
         print("="*60)
@@ -410,12 +440,3 @@ class ToolCollector:
 
         print()
         input("Press Enter to exit...")
-
-
-def main():
-    collector = ToolCollector()
-    collector.run()
-
-
-if __name__ == '__main__':
-    main()
