@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 title APK签名替换工具 - EXE打包
 
@@ -14,7 +14,6 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
 echo [✓] Python 已安装
 
 REM 检查 PyInstaller
@@ -28,15 +27,14 @@ if errorlevel 1 (
         exit /b 1
     )
 )
-
 echo [✓] PyInstaller 已就绪
 echo.
 
 REM 选择模式
 echo 选择打包模式:
-echo   1. 单文件 EXE ^(推荐，便携^)
-echo   2. 目录式 EXE ^(启动快^)
-echo   3. 调试版 ^(带控制台窗口^)
+echo   1. 单文件 EXE (推荐，便携)
+echo   2. 目录式 EXE (启动快)
+echo   3. 调试版 (带控制台窗口)
 echo.
 set /p choice="请输入选项 (1-3): "
 

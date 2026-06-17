@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 echo ==========================================
 echo APK 签名替换工具 - 环境检查
@@ -7,6 +7,8 @@ echo.
 
 echo [检查必要工具...]
 echo.
+
+set error_count=0
 
 call :check_tool apktool "apktool --version"
 call :check_tool zipalign "zipalign"
