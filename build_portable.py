@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+便携包构建脚本
+自动收集 apktool、Android SDK Build-Tools、JDK 工具到 _tools/ 目录
+然后执行 PyInstaller 打包
+"""
+
+import os
+import sys
+import shutil
+import subprocess
+import urllib.request
+import zipfile
+from pathlib import Path
+
+
+class PortableBuilder:
+    def __init__(self, project_dir):
+        self.project_dir = Path(project_dir)
+        self.tools_dir = self.project_dir / "_tools"
+        self.tools_dir.mkdir(exist_ok=True)
+
+        self.collected = []
+        self.missing = []
+
+    def log(self, msg):
+        print(f"[+] {msg}")
+
+    def warn(self, msg):
+        print(f"[⚠] {msg}")
+
+    def error(self, msg):
+        print(f"[✗] {msg}")
+
+    def success(self, msg):
+        print(f"[✓] {msg}")
+
+    # ========== 下载 apktool ==========
+    def download_apktool(self):
+        """下载 apktool.jar"""
+        target = self.tools_dir / "apktool.jar"
+        if target.exists():
+            self.success(f"apktool.jar 已存在 ({target.stat().st_size/1024/1024:.1f}MB)")
+            return True
+
+        self.log("下载 apktool.jar...")
+        urls = [
+            "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
+            "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.2/apktool_2.9.2.jar",
+        ]
+
+        for url in urls:
+            try:
+                urllib.request.urlretrieve(url, target)
+                self.success(f"apktool.jar 下载完成 ({target.stat().st_size/1024/1024:.1f}MB)")
+                return True
+            except Exception as e:
+                self.warn(f"下载失败: {e}")
+                continue
+
+        self.error("apktool.jar 下载失败，请手动下载到 _tools/ 目录")
+        self.error("下载地址: https://apktool.org/docs/install/")
+        return False
+
+    # ========== 收集 SDK Build-Tools ==========
+    def collect_build_tools(self):
+        """从本地 Android SDK 收集 zipalign、apksigner"""
+        self.log("查找 Android SDK Build-Tools...")
+
+        # 常见 SDK 路径
+        search_paths = [
+            Path(os.environ.get("ANDROID_SDK", "")) / "build-tools",
+            Path(os.environ.get("ANDROID_HOME", "")) / "build-tools",
+            Path.home() / "AppData" / "Local" / "Android" / "Sdk" / "build-tools",
+            Path.home() / "Library" / "Android" / "sdk" / "build-tools",  # macOS
+            Path.home() / "Android" / "Sdk" / "build-tools",  # Linux
+        ]
+
+        found = False
+        for base in search_paths:
+            if not base.exists():
+                continue
+
+            # 找最新版本
+            versions = [d for d in base.iterdir() if d.is_dir()]
+            if not versions:
+                continue
+
+            latest = sorted(versions, key=lambda x: x.name)[-1]
+            self.log(f"  发现 Build-Tools: {latest.name}")
+
+            files_to_copy = {
+                "zipalign.exe": "zipalign",
+                "zipalign": "zipalign",
+                "apksigner.bat": "apksigner",
+                "apksigner": "apksigner",
+                "libwinpthread-1.dll": "libwinpthread-1.dll",
+            }
+
+            for src_name, dst_name in files_to_copy.items():
+                src = latest / src_name
+                if src.exists():
+                    dst = self.tools_dir / dst_name
+                    shutil.copy2(src, dst)
+                    self.success(f"  复制: {src_name} -> _tools/{dst_name}")
+                    found = True
+
+            # 复制 apksigner 依赖的 jar
+            apksigner_jar = latest / "lib" / "apksigner.jar"
+            if apksigner_jar.exists():
+                lib_dir = self.tools_dir / "lib"
+                lib_dir.mkdir(exist_ok=True)
+                shutil.copy2(apksigner_jar, lib_dir / "apksigner.jar")
+                self.success(f"  复制: apksigner.jar")
+
+            if found:
+                break
+
+        if not found:
+            self.error("未找到 Android SDK Build-Tools")
+            self.error("请从 Android Studio 的 SDK Manager 安装，或手动复制工具到 _tools/")
+            self.missing.append("zipalign, apksigner")
+
+        return found
+
+    # ========== 收集 JDK 工具 ==========
+    def collect_jdk(self):
+        """从本地 JDK 收集 keytool、jarsigner、java"""
+        self.log("查找 JDK...")
+
+        # 常见 JDK 路径
+        search_paths = [
+            Path(os.environ.get("JAVA_HOME", "")) / "bin",
+            Path("C:/Program Files/Java"),
+            Path("C:/Program Files/Eclipse Adoptium"),
+            Path.home() / ".sdkman" / "candidates" / "java" / "current" / "bin",
+            Path("/usr/lib/jvm"),
+            Path("/Library/Java/JavaVirtualMachines"),
+        ]
+
+        found = False
+        for base in search_paths:
+            if not base.exists():
+                continue
+
+            # 如果是 bin 目录直接检查
+            if base.name == "bin" and (base / "java.exe").exists() or (base / "java").exists():
+                java_bin = base
+            else:
+                # 搜索子目录
+                java_bins = list(base.rglob("bin/java.exe")) + list(base.rglob("bin/java"))
+                if not java_bins:
+                    continue
+                java_bin = java_bins[0].parent
+
+            self.log(f"  发现 JDK: {java_bin}")
+
+            files_to_copy = ["java", "java.exe", "keytool", "keytool.exe", 
+                           "jarsigner", "jarsigner.exe", "jmod", "jmod.exe"]
+
+            java_dir = self.tools_dir / "java" / "bin"
+            java_dir.mkdir(parents=True, exist_ok=True)
+
+            for fname in files_to_copy:
+                src = java_bin / fname
+                if src.exists():
+                    dst = java_dir / fname
+                    shutil.copy2(src, dst)
+                    self.success(f"  复制: {fname}")
+                    found = True
+
+            # 复制必要的 DLL (Windows)
+            dlls = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+            for dll in dlls:
+                src = java_bin / dll
+                if src.exists():
+                    shutil.copy2(src, java_dir / dll)
+
+            # 复制 JRE 核心模块（最小化）
+            if found:
+                self._copy_minimal_jre(java_bin.parent, self.tools_dir / "java")
+                break
+
+        if not found:
+            self.error("未找到 JDK")
+            self.error("请安装 JDK 8+ 并设置 JAVA_HOME，或手动复制到 _tools/java/bin/")
+            self.missing.append("java, keytool, jarsigner")
+
+        return found
+
+    def _copy_minimal_jre(self, jdk_root, target_java):
+        """复制最小化 JRE 运行环境"""
+        self.log("复制最小 JRE 环境...")
+
+        # 需要复制的目录
+        dirs_to_copy = ["lib", "conf"]
+        for dname in dirs_to_copy:
+            src = jdk_root / dname
+            if src.exists():
+                dst = target_java / dname
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
+                    "*.diz", "src.zip", "demo", "sample", "man"
+                ))
+                self.success(f"  复制: {dname}/")
+
+    # ========== 收集 adb (可选) ==========
+    def collect_adb(self):
+        """收集 adb 工具（可选）"""
+        self.log("查找 adb...")
+        adb = shutil.which("adb")
+        if adb:
+            shutil.copy2(adb, self.tools_dir / "adb.exe")
+            self.success(f"adb 已复制")
+            return True
+        self.warn("adb 未找到（可选）")
+        return False
+
+    # ========== 主流程 ==========
+    def build(self):
+        """执行完整构建"""
+        print("="*60)
+        print("APK 签名替换工具 - 便携包构建")
+        print("="*60)
+        print()
+
+        self.log("目标目录:")
+        print(f"  项目: {self.project_dir}")
+        print(f"  工具: {self.tools_dir}")
+        print()
+
+        # 1. 下载/收集工具
+        self.download_apktool()
+        self.collect_build_tools()
+        self.collect_jdk()
+        self.collect_adb()
+
+        print()
+        print("="*60)
+        if self.missing:
+            print(f"[⚠] 缺少工具: {', '.join(self.missing)}")
+            print("    请手动补充后重新运行")
+            print("="*60)
+            return False
+        else:
+            print("[✓] 所有工具已收集完成！")
+            print("="*60)
+
+        print()
+
+        # 2. 执行 PyInstaller 打包
+        self.log("开始 PyInstaller 打包...")
+
+        # 构建打包命令
+        # 使用 --add-data 把 _tools 目录打包进去
+        # Windows 格式: "_tools;_tools"  (源;目标)
+        add_data = f"_tools;_tools"
+
+        cmd = [
+            sys.executable, "-m", "PyInstaller",
+            "--noconfirm",
+            "--onefile",
+            "--windowed",
+            "--name", "APK签名替换工具",
+            "--add-data", add_data,
+            "--clean",
+            str(self.project_dir / "apk_resigner_gui.py")
+        ]
+
+        print(f"  命令: {' '.join(cmd)}")
+        print()
+
+        result = subprocess.run(cmd, cwd=self.project_dir)
+
+        if result.returncode == 0:
+            print()
+            print("="*60)
+            print("[✓] 打包成功！")
+            print("="*60)
+            print()
+            print(f"输出位置:")
+            print(f"  {self.project_dir / 'dist' / 'APK签名替换工具.exe'}")
+            print()
+            print("使用说明:")
+            print("  1. 复制 dist/APK签名替换工具.exe 到任意位置")
+            print("  2. 双击运行，无需安装任何依赖")
+            print("  3. 所有工具已内置")
+            print()
+            print("⚠️ 注意:")
+            print("  - 单文件 EXE 首次启动较慢（需解压内置工具）")
+            print("  - 工作目录自动生成在用户目录下")
+            return True
+        else:
+            print()
+            print("[✗] 打包失败")
+            return False
+
+
+def main():
+    # 脚本所在目录即项目目录
+    project_dir = Path(__file__).parent
+    builder = PortableBuilder(project_dir)
+    builder.build()
+
+    print()
+    input("按回车键退出...")
+
+
+if __name__ == '__main__':
+    main()
