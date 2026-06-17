@@ -284,6 +284,78 @@ class APKResigner:
         print(f"[✓] 签名完成")
         return True
 
+    def sign_apk_v1(self, apk_path, keystore_path, alias="testkey", password="123456"):
+        """使用 jarsigner 进行 V1 (JAR) 签名"""
+        apk_path = Path(apk_path)
+        keystore_path = Path(keystore_path)
+
+        if not keystore_path.exists():
+            print(f"[错误] 密钥库不存在: {keystore_path}")
+            return False
+
+        print(f"[+] V1 签名 APK (jarsigner): {apk_path}")
+        print(f"    ⚠️  V1 签名仅含 JAR 签名，Android 7.0+ 可能拒绝安装")
+
+        cmd = [
+            'jarsigner', '-verbose',
+            '-sigalg', 'SHA256withRSA',
+            '-digestalg', 'SHA-256',
+            '-keystore', str(keystore_path),
+            '-storepass', password,
+            '-keypass', password,
+            str(apk_path),
+            alias
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"[错误] V1 签名失败: {result.stderr}")
+            return False
+
+        print(f"[✓] V1 签名完成")
+        return True
+
+    def strip_signature(self, apk_path, output_dir=None):
+        """去除 APK 原有签名"""
+        apk_path = Path(apk_path)
+
+        if output_dir is None:
+            output_dir = self.work_dir / f"stripped_{apk_path.stem}"
+        else:
+            output_dir = Path(output_dir)
+
+        output_dir.mkdir(exist_ok=True)
+
+        print(f"[+] 解压并去除签名: {apk_path}")
+
+        with zipfile.ZipFile(apk_path, 'r') as zip_ref:
+            for item in zip_ref.namelist():
+                if item.startswith('META-INF/'):
+                    print(f"  - 移除签名文件: {item}")
+                    continue
+                zip_ref.extract(item, output_dir)
+
+        print(f"[✓] 签名已去除，解压到: {output_dir}")
+        return output_dir
+
+    def repack_apk(self, source_dir, output_apk):
+        """重新打包为 APK（ZIP 格式）"""
+        source_dir = Path(source_dir)
+        output_apk = Path(output_apk)
+
+        print(f"[+] 重新打包: {source_dir} -> {output_apk}")
+
+        with zipfile.ZipFile(output_apk, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(source_dir):
+                for file in files:
+                    file_path = Path(root) / file
+                    arcname = str(file_path.relative_to(source_dir))
+                    zipf.write(file_path, arcname)
+
+        print(f"[✓] 打包完成: {output_apk}")
+        return output_apk
+
     def verify_apk(self, apk_path):
         """验证 APK 签名和对齐"""
         apk_path = Path(apk_path)
@@ -375,8 +447,12 @@ class APKResigner:
             return None
 
         # 6. 签名
-        if not self.sign_apk(aligned_apk, keystore_path, alias, password, scheme):
-            return None
+        if scheme == "v1":
+            if not self.sign_apk_v1(aligned_apk, keystore_path, alias, password):
+                return None
+        else:
+            if not self.sign_apk(aligned_apk, keystore_path, alias, password, scheme):
+                return None
 
         # 7. 验证
         self.verify_apk(aligned_apk)
@@ -390,6 +466,61 @@ class APKResigner:
 
         print(f"\n[✓] 完成！最终 APK: {final_apk}")
         print(f"    密钥库: {keystore_path}")
+
+        return final_apk
+
+    def v1_only_process(self, original_apk, keystore_path=None, alias="testkey", 
+                       password="123456"):
+        """仅使用 V1 签名流程：不解包修改，仅去除原签名 + V1 签名"""
+        original_apk = Path(original_apk)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        print("="*50)
+        print("开始仅使用 V1 签名流程")
+        print("="*50)
+        print("⚠️  V1 签名仅兼容 Android 5.0-6.0，Android 7.0+ 会拒绝安装！")
+
+        # 1. 生成密钥（如果没有提供）
+        if keystore_path is None:
+            keystore_path = self.work_dir / f"test_keystore_{timestamp}.jks"
+            self.generate_keystore(keystore_path, alias, password)
+        else:
+            keystore_path = Path(keystore_path)
+
+        # 2. 去除原签名
+        stripped_dir = self.strip_signature(original_apk)
+
+        # 3. 重新打包
+        unsigned_apk = self.work_dir / f"unsigned_{original_apk.stem}_{timestamp}.apk"
+        self.repack_apk(stripped_dir, unsigned_apk)
+
+        # 4. zipalign
+        aligned_apk = self.zipalign_apk(unsigned_apk)
+        if not aligned_apk:
+            return None
+
+        # 5. V1 签名
+        if not self.sign_apk_v1(aligned_apk, keystore_path, alias, password):
+            return None
+
+        # 6. 输出最终文件
+        final_apk = self.work_dir / f"v1_signed_{original_apk.stem}_{timestamp}.apk"
+        shutil.copy(aligned_apk, final_apk)
+
+        print(f"\n[✓] V1 签名完成！")
+        print(f"    最终 APK: {final_apk}")
+        print(f"    密钥库: {keystore_path}")
+        print(f"\n⚠️  注意：此 APK 仅含 V1 签名")
+        print(f"    - Android 5.0-6.0: 可能安装成功")
+        print(f"    - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）")
+        print(f"    - 可用于测试系统对 v1-only APK 的拦截能力")
+
+        # 对比信息
+        print(f"\n[+] 签名对比:")
+        for label, apk in [("原始", original_apk), ("V1签名", final_apk)]:
+            with open(apk, 'rb') as f:
+                md5 = hashlib.md5(f.read()).hexdigest()
+            print(f"    {label}: {md5}")
 
         return final_apk
 
@@ -415,6 +546,9 @@ def main():
   # 同时修改 smali 代码
   python apk_resigner.py -i original.apk --modify-smali
 
+  # 仅使用 V1 签名（不解包修改）
+  python apk_resigner.py -i original.apk --v1-only
+
 注意事项:
   - 需要安装: apktool, Android SDK Build-Tools, JDK
   - 修改后的 APK 签名已变更，无法通过原签名校验
@@ -434,6 +568,8 @@ def main():
     parser.add_argument('--modify-smali', action='store_true', help='同时修改 smali 代码')
     parser.add_argument('--no-modify-manifest', action='store_true', 
                        help='不修改 AndroidManifest.xml')
+    parser.add_argument('--v1-only', action='store_true',
+                       help='仅使用 V1 签名（不解包修改，仅去除原签名+ jarsigner V1 签名）')
 
     args = parser.parse_args()
 
@@ -445,6 +581,18 @@ def main():
         decompiled = resigner.decompile(args.input)
         if decompiled:
             print(f"\n反编译结果保存在: {decompiled}")
+    elif args.v1_only:
+        # V1 仅签名流程
+        final_apk = resigner.v1_only_process(
+            original_apk=args.input,
+            keystore_path=args.keystore,
+            alias=args.alias,
+            password=args.password
+        )
+        if final_apk:
+            print(f"\n测试命令:")
+            print(f"  adb install {final_apk}")
+            print(f"  apksigner verify -v {final_apk}")
     else:
         # 完整流程
         final_apk = resigner.full_process(
