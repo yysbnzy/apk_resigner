@@ -249,10 +249,10 @@ class APKResignerGUI:
         btn_frame = ttk.Frame(main_frame)
         btn_frame.grid(row=5, column=0, columnspan=3, pady=10)
 
-        self.btn_full = ttk.Button(btn_frame, text="🔧 完整流程", command=lambda: self.run_task("full"), width=25)
+        self.btn_full = ttk.Button(btn_frame, text="🔧 修改内容和签名", command=lambda: self.run_task("full"), width=25)
         self.btn_full.pack(side=tk.LEFT, padx=5)
 
-        self.btn_quick = ttk.Button(btn_frame, text="⚡ 快速签名替换", command=lambda: self.run_task("quick"), width=25)
+        self.btn_quick = ttk.Button(btn_frame, text="⚡ 仅修改签名", command=lambda: self.run_task("quick"), width=25)
         self.btn_quick.pack(side=tk.LEFT, padx=5)
 
         self.btn_verify = ttk.Button(btn_frame, text="🔍 验证签名", command=self.verify_apk, width=15)
@@ -342,7 +342,7 @@ class APKResignerGUI:
 
     def _full_process(self, apk):
         self.log("="*50, "INFO")
-        self.log("开始完整签名替换流程", "INFO")
+        self.log("开始修改内容和签名流程", "INFO")
         self.log("="*50, "INFO")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -382,7 +382,7 @@ class APKResignerGUI:
 
     def _quick_replace(self, apk):
         self.log("="*50, "INFO")
-        self.log("开始快速签名替换", "INFO")
+        self.log("开始仅修改签名流程", "INFO")
         self.log("="*50, "INFO")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -406,10 +406,10 @@ class APKResignerGUI:
         final = self.work_dir / f"resigned_{Path(apk).stem}_{timestamp}.apk"
         shutil.copy(aligned, final)
 
-        self.log(f"\n✅ 快速签名替换完成！", "SUCCESS")
+        self.log(f"\n✅ 仅修改签名完成！", "SUCCESS")
         self.log(f"📦 最终 APK: {final}", "SUCCESS")
         self._compare_signatures(apk, final)
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"快速签名替换完成！\n\n最终 APK:\n{final}"))
+        self.root.after(0, lambda: messagebox.showinfo("完成", f"仅修改签名完成！\n\n最终 APK:\n{final}"))
 
     def _generate_keystore(self, path):
         self.log(f"[+] 生成测试密钥库: {path.name}")
