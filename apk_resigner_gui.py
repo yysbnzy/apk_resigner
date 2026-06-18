@@ -471,16 +471,6 @@ class APKResignerGUI:
         self._compare_signatures(apk, final)
         self.root.after(0, lambda: messagebox.showinfo("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
 
-        final = self.work_dir / f"resigned_{Path(apk).stem}_{timestamp}.apk"
-        shutil.copy(aligned, final)
-
-        self.log(f"\n✅ 完成！", "SUCCESS")
-        self.log(f"📦 最终 APK: {final}", "SUCCESS")
-        self.log(f"📋 签名方案: {scheme}", "INFO")
-        self.log(f"🔑 密钥库: {keystore}", "INFO")
-        self._compare_signatures(apk, final)
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
-
     def _generate_keystore(self, path):
         self.log(f"[+] 生成测试密钥库: {path.name}")
         path = Path(path)
