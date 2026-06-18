@@ -66,13 +66,13 @@ class ToolManager:
         java = self._find_java()
         if java:
             self.tool_paths['java'] = java
-            keytool = self._find_tool("keytool", [".exe", ""], subdir="java/bin")
+            keytool = self._find_jdk_tool("keytool", [".exe", ""])
             if keytool:
                 self.tool_paths['keytool'] = keytool
             elif shutil.which('keytool'):
                 self.tool_paths['keytool'] = 'keytool'
 
-            jarsigner = self._find_tool("jarsigner", [".exe", ""], subdir="java/bin")
+            jarsigner = self._find_jdk_tool("jarsigner", [".exe", ""])
             if jarsigner:
                 self.tool_paths['jarsigner'] = jarsigner
             elif shutil.which('jarsigner'):
@@ -84,7 +84,23 @@ class ToolManager:
         elif shutil.which('adb'):
             self.tool_paths['adb'] = 'adb'
 
+    def _find_java(self):
+        """查找可用的 Java，优先检查内置的，验证 java.dll 是否配套"""
+        # 检查内置 java（java.exe + java.dll 必须在同一目录）
+        java_exe = self.java_dir / "java.exe"
+        if java_exe.exists() and (java_exe.parent / "java.dll").exists():
+            return str(java_exe)
+        java_exe = self.tools_dir / "java.exe"
+        if java_exe.exists() and (java_exe.parent / "java.dll").exists():
+            return str(java_exe)
+        # 回退到系统 Java
+        sys_java = shutil.which('java')
+        if sys_java:
+            return sys_java
+        return None
+
     def _find_tool(self, name, exts, subdir=None):
+        """查找工具，优先内置，但需确认配套 java 可用"""
         search_dirs = [self.tools_dir]
         if subdir:
             search_dirs.append(self.tools_dir / subdir)
@@ -98,19 +114,23 @@ class ToolManager:
             return sys_path
         return None
 
-    def _find_java(self):
-        java_exe = self.java_dir / "java.exe"
-        if java_exe.exists():
-            return str(java_exe)
-        java_exe = self.tools_dir / "java.exe"
-        if java_exe.exists():
-            return str(java_exe)
-        sys_java = shutil.which('java')
-        if sys_java:
-            return sys_java
+    def _find_jdk_tool(self, name, exts):
+        """查找 JDK 工具（keytool/jarsigner），优先与 java 同目录"""
+        java_path = self.tool_paths.get('java')
+        if java_path:
+            java_dir = Path(java_path).parent
+            for ext in exts:
+                path = java_dir / f"{name}{ext}"
+                if path.exists():
+                    return str(path)
+        # 回退到系统搜索
+        sys_path = shutil.which(name)
+        if sys_path:
+            return sys_path
         return None
 
     def get_cmd(self, tool_name):
+        """获取工具命令列表（处理 .jar 需要 java -jar）"""
         path = self.tool_paths.get(tool_name)
         if not path:
             return None
@@ -177,7 +197,7 @@ class APKResignerGUI:
             self.log("纯 Python 模式已启用：V1-only 签名可用，无需 JDK/Android SDK", "INFO")
             self.pure_python_mode = True
             self.status_var.set(f"纯 Python 模式 (缺少: {', '.join(missing)})")
-            self.btn_sign.config(state="disabled")
+            self.btn_setup.config(state="disabled")
         else:
             self.status_var.set("就绪 (全部内置)")
 
@@ -225,16 +245,16 @@ class APKResignerGUI:
         ttk.Label(config_frame, text="密钥密码:").grid(row=0, column=2, sticky=tk.W, padx=5)
         ttk.Entry(config_frame, textvariable=self.password, show="*", width=20).grid(row=0, column=3, sticky=tk.W, padx=5)
 
-        # 2个操作按钮
-        btn_frame = ttk.LabelFrame(main_frame, text="操作按钮", padding="10")
+        # 配置按钮
+        btn_frame = ttk.LabelFrame(main_frame, text="配置", padding="10")
         btn_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        self.btn_sign = ttk.Button(btn_frame, text="🔧 修改内容+签名", command=self.run_sign, width=30)
-        self.btn_sign.pack(side=tk.LEFT, padx=15)
-        self._tooltip(self.btn_sign, "解压APK→添加test.txt→重新打包→按原方案签名")
+        self.btn_setup = ttk.Button(btn_frame, text="🔧 配置并执行", command=self.setup, width=24)
+        self.btn_setup.pack(side=tk.LEFT, padx=10)
+        self._tooltip(self.btn_setup, "解压APK→添加test.txt→重新打包→按原方案重新签名")
 
         self.btn_verify = ttk.Button(btn_frame, text="🔍 验证签名", command=self.verify_apk, width=20)
-        self.btn_verify.pack(side=tk.LEFT, padx=15)
+        self.btn_verify.pack(side=tk.LEFT, padx=10)
         self._tooltip(self.btn_verify, "检查APK的签名状态和对齐情况")
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
@@ -345,29 +365,58 @@ class APKResignerGUI:
         self.root.update_idletasks()
 
     def set_buttons_state(self, state):
-        self.btn_sign.config(state=state)
+        self.btn_setup.config(state=state)
         self.btn_verify.config(state=state)
 
-    def run_sign(self, apk=None):
-        if apk is None:
-            apk = self.apk_path.get()
+    def setup(self):
+        apk = self.apk_path.get()
         if not apk or not Path(apk).exists():
             messagebox.showerror("错误", "请选择有效的 APK 文件")
             return
         self.set_buttons_state("disabled")
         self.progress.start()
         self.status_var.set("执行中...")
-        thread = threading.Thread(target=self._do_sign, args=(apk,))
+        thread = threading.Thread(target=self._do_setup, args=(apk,))
         thread.daemon = True
         thread.start()
 
-    def _do_sign(self, apk):
+    def _do_setup(self, apk):
         try:
             self._full_process(apk)
         except Exception as e:
             self.log(f"❌ 执行出错: {str(e)}", "ERROR")
         finally:
             self.root.after(0, self._task_done)
+
+    def _quick_resign(self, apk):
+        self.log("="*50, "INFO")
+        self.log("⚡ 一键重签名流程", "INFO")
+        self.log("  保持原签名方案: " + self.detected_scheme.get(), "INFO")
+        self.log("="*50, "INFO")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        keystore = self._get_keystore()
+
+        stripped = self.work_dir / f"stripped_{timestamp}"
+        self._strip_signature(apk, stripped)
+
+        unsigned = self.work_dir / f"unsigned_{timestamp}.apk"
+        self._repack_zip(stripped, unsigned)
+
+        aligned = self.work_dir / f"aligned_{timestamp}.apk"
+        self._zipalign(unsigned, aligned)
+
+        scheme = self.detected_scheme.get()
+        self._sign_with_scheme(aligned, keystore, scheme)
+
+        final = self.work_dir / f"resigned_{Path(apk).stem}_{timestamp}.apk"
+        shutil.copy(aligned, final)
+
+        self.log(f"\n✅ 一键重签名完成！", "SUCCESS")
+        self.log(f"📦 最终 APK: {final}", "SUCCESS")
+        self.log(f"📋 签名方案: {scheme}", "INFO")
+        self.log(f"🔑 密钥库: {keystore}", "INFO")
+        self._compare_signatures(apk, final)
+        self.root.after(0, lambda: messagebox.showinfo("完成", f"一键重签名完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
 
     def _task_done(self):
         self.progress.stop()
@@ -440,8 +489,9 @@ class APKResignerGUI:
         if not cmd:
             self.log("❌ keytool 不可用", "ERROR")
             raise RuntimeError("keytool 不可用")
+        self.log(f"  使用: {cmd[0]}", "INFO")
         cmd += [
-            '-genkey', '-v',
+            '-genkeypair', '-v',
             '-keystore', str(path),
             '-alias', self.alias.get(),
             '-keyalg', 'RSA',
@@ -449,14 +499,19 @@ class APKResignerGUI:
             '-validity', '36500',
             '-dname', 'CN=Test, OU=Test, O=Test, L=Test, ST=Test, C=CN',
             '-storepass', self.password.get(),
-            '-keypass', self.password.get(),
-            '-noprompt'
+            '-keypass', self.password.get()
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and path.exists():
             self.log(f"  ✓ 密钥库生成成功", "SUCCESS")
         else:
-            self.log(f"  ✗ 密钥库生成失败", "ERROR")
+            self.log(f"  ✗ 密钥库生成失败: rc={result.returncode}", "ERROR")
+            if result.stderr:
+                self.log(f"  stderr: {result.stderr}", "ERROR")
+            if result.stdout:
+                self.log(f"  stdout: {result.stdout}", "ERROR")
+            # 显示完整命令，方便用户手动调试
+            self.log(f"  命令: {' '.join(cmd[:5])} ...", "INFO")
             raise RuntimeError(f"密钥库生成失败: rc={result.returncode}")
 
     def _unzip_apk(self, apk, out_dir):
@@ -571,78 +626,19 @@ class APKResignerGUI:
     def show_help(self):
         help_text = """APK 签名替换工具 - 使用说明
 
-版本：v1.7.4  |  适用：GB 44495 / R155 测试
+🔧 修改内容+签名：解压 → 添加test.txt → 重打包 → 按原方案重新签名
+⚡ 一键重签名：不解包，去除原签名后按原方案重新签名
+🔍 验证签名：检查APK签名状态和对齐情况
 
-一、工具概述
+测试方法：
+1. 选APK → 点击按钮 → 获取输出APK
+2. 在目标系统安装 → 预期：系统拒绝安装
 
-APK 签名替换工具是一款用于 APK 签名完整性测试的便携工具，适用于 GB 44495（汽车信息安全技术要求）和 R155（汽车网络安全）等法规的 OTA 安全测试场景。
+签名方案：V1(5.0-6.0) / V2(7.0+) / V3(9.0+) / V4(11.0+)
+工具自动检测原方案并保持，无需手动选择。
 
-特点：
-  零依赖：无需安装 Android SDK、JDK，所有工具内置
-  单文件 EXE：复制到任何 Windows 电脑都能直接运行
-  自动检测签名：自动识别 APK 的签名方案（V1/V2/V3/V4）并保持一致
-  懒加载加密：缺少 cryptography 模块时不崩溃，自动降级
-  GUI 界面：可视化操作，无需命令行
-
-二、功能说明
-
-🔧 修改内容+签名
-  功能：自动检测原 APK 的签名方案 → 直接解压 APK（无需反编译）
-        → 在 assets/ 目录添加 test.txt 标记文件 → 重新打包 → zipalign 对齐
-        → 按原签名方案重新签名（新密钥）
-  输出：内容被修改 + 签名被替换的 APK
-  用途：测试系统对"篡改 APK"的响应（内容+签名双重校验失败）
-
-🔍 验证签名
-  功能：检查 APK 的签名状态（V1/V2/V3/V4）和对齐情况
-  输出：不生成新 APK，仅显示签名信息
-  用途：检查 APK 当前签名状态
-
-三、使用指南
-
-测试场景：完整性校验失败
-  1. 点击"浏览..."选择原始 APK 文件
-  2. 勾选"自动生成测试密钥"
-  3. 点击 🔧 修改内容+签名
-  4. 等待处理完成，获取输出 APK
-  5. 在目标系统尝试安装输出 APK
-  6. 预期结果：系统拒绝安装，并记录安全事件
-
-测试场景：验证签名状态
-  1. 选择 APK 文件
-  2. 点击 🔍 验证签名
-  3. 查看日志窗口显示的签名信息
-
-四、签名方案说明
-
-  V1（Android 5.0-6.0）：JAR 签名，META-INF/ 下文件
-  V2（Android 7.0+）：APK Signing Block，整包签名
-  V3（Android 9.0+）：V2 基础上支持密钥轮换
-  V4（Android 11.0+）：V3 基础上支持增量签名
-
-五、常见问题
-
-  Q: 提示缺少 cryptography 模块？
-  A: 工具会自动降级，无需手动安装。如需完整功能，运行 pip install cryptography。
-
-  Q: 密钥库生成失败（rc=2）？
-  A: 检查 _tools/java/bin/ 下是否包含 jli.dll、java.dll、jvm.dll。
-     如缺失，运行 collect_tools.py 自动收集，或从系统 JDK 复制。
-
-  Q: 签名后的 APK 无法安装？
-  A: 这是预期行为。签名已替换，原完整性校验会失败。
-     如需安装，需关闭系统签名校验或使用测试设备。
-
-六、法规测试对应
-
-  GB 44495 7.3 OTA 安全要求：验证 OTA 包完整性校验机制
-  R155 7.5 软件更新：验证签名验证机制
-
-  测试方法：
-    1. 使用本工具生成篡改后的 APK（🔧 修改内容+签名）
-    2. 尝试在目标系统安装/更新
-    3. 观察系统是否拒绝并记录安全事件
-"""
+注意：签名后的APK无法安装是预期行为，用于测试校验机制。
+        """
         messagebox.showinfo("使用说明", help_text)
 
 

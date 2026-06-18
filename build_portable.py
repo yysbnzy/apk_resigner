@@ -36,19 +36,17 @@ class PortableBuilder:
     def success(self, msg):
         print(f"[✓] {msg}")
 
-    def _ensure_cryptography(self):
-        """检查并安装 cryptography 模块"""
+    def _check_cryptography(self):
+        """检查 cryptography 模块（可选，用于纯 Python 签名模式）"""
         try:
             import cryptography
             print(f"[✓] cryptography 已安装 (版本: {cryptography.__version__})")
+            return True
         except ImportError:
-            print("[⚠] cryptography 未安装，正在安装...")
-            result = subprocess.run([sys.executable, "-m", "pip", "install", "cryptography"], capture_output=True, text=True)
-            if result.returncode == 0:
-                print("[✓] cryptography 安装成功")
-            else:
-                print(f"[✗] cryptography 安装失败: {result.stderr}")
-                print("    请手动运行: pip install cryptography")
+            print("[⚠] cryptography 未安装（可选，不影响主功能）")
+            print("    主签名功能使用内置 JDK 工具，无需 cryptography")
+            print("    如需纯 Python 签名模式，可手动运行: pip install cryptography")
+            return False
 
     # ========== 下载 apktool ==========
     def download_apktool(self):
@@ -171,7 +169,8 @@ class PortableBuilder:
             self.log(f"  发现 JDK: {java_bin}")
 
             files_to_copy = ["java", "java.exe", "keytool", "keytool.exe", 
-                           "jarsigner", "jarsigner.exe", "jmod", "jmod.exe"]
+                           "jarsigner", "jarsigner.exe", "jmod", "jmod.exe",
+                           "jli.dll"]
 
             java_dir = self.tools_dir / "java" / "bin"
             java_dir.mkdir(parents=True, exist_ok=True)
@@ -184,27 +183,12 @@ class PortableBuilder:
                     self.success(f"  复制: {fname}")
                     found = True
 
-            # 复制 JDK 必需 DLL (Windows)
-            jdk_dlls = ["jli.dll", "java.dll", "awt.dll", "verify.dll", "javajpeg.dll", 
-                        "net.dll", "nio.dll", "zip.dll", "instrument.dll",
-                        "management.dll", "management_ext.dll", "prefs.dll", "rmi.dll",
-                        "saproc.dll", "sunmscapi.dll", "ucrtbase.dll",
-                        "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
-            for dll in jdk_dlls:
+            # 复制必要的 DLL (Windows)
+            dlls = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+            for dll in dlls:
                 src = java_bin / dll
                 if src.exists():
                     shutil.copy2(src, java_dir / dll)
-                    self.success(f"  复制: {dll}")
-
-            # 复制 jvm.dll (在 bin/server/ 或 bin/client/ 下)
-            for jvm_subdir in ["server", "client"]:
-                jvm_src = java_bin / jvm_subdir / "jvm.dll"
-                if jvm_src.exists():
-                    jvm_dst = java_dir / jvm_subdir
-                    jvm_dst.mkdir(exist_ok=True)
-                    shutil.copy2(jvm_src, jvm_dst / "jvm.dll")
-                    self.success(f"  复制: {jvm_subdir}/jvm.dll")
-                    break
 
             # 复制 JRE 核心模块（最小化）
             if found:
@@ -241,8 +225,16 @@ class PortableBuilder:
         self.log("查找 adb...")
         adb = shutil.which("adb")
         if adb:
-            shutil.copy2(adb, self.tools_dir / "adb.exe")
+            adb_path = Path(adb)
+            shutil.copy2(adb_path, self.tools_dir / "adb.exe")
             self.success(f"adb 已复制")
+            # 复制 adb 依赖的 DLL
+            adb_dir = adb_path.parent
+            for dll in ["AdbWinApi.dll", "AdbWinUsbApi.dll"]:
+                dll_src = adb_dir / dll
+                if dll_src.exists():
+                    shutil.copy2(dll_src, self.tools_dir / dll)
+                    self.success(f"  复制: {dll}")
             return True
         self.warn("adb 未找到（可选）")
         return False
@@ -254,14 +246,16 @@ class PortableBuilder:
         print("APK 签名替换工具 - 便携包构建")
         print("="*60)
         print()
-
+        
+        # 0. 检查 cryptography（可选，不影响主功能）
+        has_crypto = self._check_cryptography()
+        
         self.log("目标目录:")
         print(f"  项目: {self.project_dir}")
         print(f"  工具: {self.tools_dir}")
         print()
 
         # 1. 下载/收集工具
-        self._ensure_cryptography()
         self.download_apktool()
         self.collect_build_tools()
         self.collect_jdk()
@@ -288,6 +282,9 @@ class PortableBuilder:
         # Windows 格式: "_tools;_tools"  (源;目标)
         add_data = f"_tools;_tools"
 
+        # 检查 cryptography（可选，不影响主功能）
+        has_crypto = self._check_cryptography()
+        
         cmd = [
             sys.executable, "-m", "PyInstaller",
             "--noconfirm",
@@ -295,14 +292,19 @@ class PortableBuilder:
             "--windowed",
             "--name", "APK签名替换工具",
             "--add-data", add_data,
-            "--hidden-import", "cryptography",
-            "--hidden-import", "cryptography.hazmat.primitives",
-            "--hidden-import", "cryptography.hazmat.primitives.asymmetric",
-            "--hidden-import", "cryptography.hazmat.primitives.serialization",
-            "--hidden-import", "cryptography.x509",
             "--clean",
             str(self.project_dir / "apk_resigner_gui.py")
         ]
+        
+        if has_crypto:
+            # 只有安装了 cryptography 才加 hidden-import，避免打包报错
+            cmd += [
+                "--hidden-import", "cryptography",
+                "--hidden-import", "cryptography.hazmat.primitives",
+                "--hidden-import", "cryptography.hazmat.primitives.asymmetric",
+                "--hidden-import", "cryptography.hazmat.primitives.serialization",
+                "--hidden-import", "cryptography.x509",
+            ]
 
         print(f"  命令: {' '.join(cmd)}")
         print()

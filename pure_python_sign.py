@@ -12,6 +12,9 @@ import base64
 from pathlib import Path
 from datetime import datetime
 
+from pathlib import Path
+from datetime import datetime
+
 try:
     from cryptography import x509
     from cryptography.x509.oid import NameOID
