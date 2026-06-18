@@ -443,10 +443,6 @@ class APKResignerGUI:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         keystore = self._get_keystore()
 
-        # 显示原始 APK 的 V1 签名信息
-        self.log(f"\n[+] 原始 APK 签名分析", "INFO")
-        self._log_v1_signature_info(apk)
-
         extracted = self.work_dir / f"extracted_{timestamp}"
         self._unzip_apk(apk, extracted)
 
@@ -454,8 +450,10 @@ class APKResignerGUI:
         test_file = extracted / "assets" / "test.txt"
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text("MODIFIED BY APK_RESIGNER", encoding="utf-8")
-        self.log(f"  ✓ 已添加 test.txt 到 {test_file.relative_to(extracted)}", "SUCCESS")
-        self.log(f"    内容: 'MODIFIED BY APK_RESIGNER'", "INFO")
+        self.log(f"  ✓ 已添加 test.txt", "SUCCESS")
+        self.log(f"    路径: assets/test.txt", "INFO")
+        self.log(f"    大小: {test_file.stat().st_size} 字节", "INFO")
+        self.log(f"    内容: {test_file.read_text().strip()}", "INFO")
 
         unsigned = self.work_dir / f"unsigned_{timestamp}.apk"
         self._rezip_apk(extracted, unsigned)
@@ -473,6 +471,7 @@ class APKResignerGUI:
         self.log(f"📦 最终 APK: {final}", "SUCCESS")
         self.log(f"📋 签名方案: {scheme}", "INFO")
         self.log(f"🔑 密钥库: {keystore}", "INFO")
+        self._log_signature_details(final, scheme)
         self._compare_signatures(apk, final)
         self.root.after(0, lambda: messagebox.showinfo("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
 
@@ -583,96 +582,51 @@ class APKResignerGUI:
             self.log(f"  ✗ 签名失败: {result.stderr}", "ERROR")
             raise RuntimeError("签名失败")
 
-    def _log_v1_signature_info(self, apk):
-        """显示 APK 的 V1 签名信息（META-INF 目录）"""
-        try:
+    def _log_signature_details(self, apk, scheme):
+        """记录签名详情：V1 位置、V2/V3/V4 摘要信息"""
+        self.log(f"\n[+] 签名详情分析:", "INFO")
+        
+        # V1 签名详情：列出 META-INF/ 下所有文件
+        if scheme == "v1" or self.has_v1:
+            self.log(f"  V1 签名 (JAR) 位置:", "INFO")
             with zipfile.ZipFile(apk, 'r') as zf:
-                meta_files = [n for n in zf.namelist() if n.startswith('META-INF/')]
+                meta_files = [f for f in zf.namelist() if f.startswith('META-INF/')]
                 if meta_files:
-                    self.log(f"  V1 签名文件位置 (META-INF/):", "INFO")
-                    for f in meta_files[:10]:
-                        self.log(f"    - {f}", "INFO")
-                    if len(meta_files) > 10:
-                        self.log(f"    ... 等共 {len(meta_files)} 个文件", "INFO")
+                    for f in meta_files:
+                        info = zf.getinfo(f)
+                        self.log(f"    {f} ({info.file_size} bytes)", "INFO")
                 else:
-                    self.log(f"  未检测到 V1 签名文件", "WARNING")
-        except Exception as e:
-            self.log(f"  无法读取 V1 签名信息: {e}", "WARNING")
-
-    def _log_apk_signer_info(self, apk, label):
-        """使用 apksigner 获取 V2/V3/V4 签名信息"""
-        try:
+                    self.log(f"    META-INF/ 为空（V1 签名未生成）", "WARNING")
+        
+        # V2/V3/V4 签名详情：用 apksigner 验证并提取关键信息
+        if scheme in ("v2", "v4", "v2+v3+v4") or self.has_v2 or self.has_v3 or self.has_v4:
+            self.log(f"  V2/V3/V4 签名 (APK Signing Block):", "INFO")
             cmd = self.tools.get_cmd('apksigner')
-            if not cmd:
-                return
-            cmd += ['verify', '-v', str(apk)]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                lines = result.stdout.strip().split('\n')
-                self.log(f"  {label} V2/V3/V4 签名状态:", "INFO")
-                for line in lines:
-                    if any(k in line.lower() for k in ['v1', 'v2', 'v3', 'v4', 'signer', 'certificate']):
-                        self.log(f"    {line}", "INFO")
-            else:
-                self.log(f"  {label} 签名验证: 未通过", "WARNING")
-        except Exception as e:
-            self.log(f"  无法获取签名信息: {e}", "WARNING")
+            if cmd:
+                cmd += ['verify', '-v', str(apk)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if 'Verified using' in line or 'Number of signers' in line:
+                            self.log(f"    {line}", "INFO")
+                else:
+                    self.log(f"    验证输出: {result.stderr}", "WARNING")
+            
+            # 检查 APK Signing Block 的存在（通过 Central Directory 偏移）
+            with open(apk, 'rb') as f:
+                f.seek(-6, 2)  # 文件末尾 - 6 字节
+                if f.read() == b'PK\x05\x06':
+                    self.log(f"    APK 结构正常，签名块已写入", "INFO")
+                else:
+                    self.log(f"    APK 结构异常", "WARNING")
 
     def _compare_signatures(self, original, modified):
-        self.log(f"\n{'='*50}", "INFO")
-        self.log(f"[+] 签名对比分析", "INFO")
-        self.log(f"{'='*50}", "INFO")
-
-        # 文件 MD5 对比
-        self.log(f"\n  文件哈希对比:", "INFO")
-        for label, path in [("原始 APK", original), ("修改后 APK", modified)]:
+        self.log(f"\n[+] 签名对比:", "INFO")
+        for label, path in [("原始", original), ("修改", modified)]:
             with open(path, 'rb') as f:
                 md5 = hashlib.md5(f.read()).hexdigest()
-            self.log(f"    {label}: {md5}", "INFO")
-
-        # V1 签名文件对比
-        self.log(f"\n  V1 签名 (META-INF/) 对比:", "INFO")
-        try:
-            with zipfile.ZipFile(original, 'r') as zf_orig:
-                orig_meta = set([n for n in zf_orig.namelist() if n.startswith('META-INF/')])
-            with zipfile.ZipFile(modified, 'r') as zf_mod:
-                mod_meta = set([n for n in zf_mod.namelist() if n.startswith('META-INF/')])
-            removed = orig_meta - mod_meta
-            added = mod_meta - orig_meta
-            if removed:
-                self.log(f"    原签名已移除 ({len(removed)} 个文件):", "INFO")
-                for f in list(removed)[:5]:
-                    self.log(f"      - {f}", "INFO")
-            if added:
-                self.log(f"    新签名已添加 ({len(added)} 个文件):", "INFO")
-                for f in list(added)[:5]:
-                    self.log(f"      + {f}", "INFO")
-            if not removed and not added:
-                self.log(f"    V1 签名文件无变化", "INFO")
-        except Exception as e:
-            self.log(f"    无法对比 V1 签名: {e}", "WARNING")
-
-        # V2/V3/V4 签名对比
-        self.log(f"\n  V2/V3/V4 签名 (APK Signing Block) 对比:", "INFO")
-        self._log_apk_signer_info(original, "原始")
-        self._log_apk_signer_info(modified, "修改后")
-
-        # test.txt 确认
-        self.log(f"\n  内容修改确认:", "INFO")
-        try:
-            with zipfile.ZipFile(modified, 'r') as zf:
-                if 'assets/test.txt' in zf.namelist():
-                    content = zf.read('assets/test.txt').decode('utf-8')
-                    self.log(f"    ✓ assets/test.txt 已添加", "SUCCESS")
-                    self.log(f"      内容: '{content}'", "INFO")
-                else:
-                    self.log(f"    ✗ assets/test.txt 未找到", "ERROR")
-        except Exception as e:
-            self.log(f"    无法验证 test.txt: {e}", "WARNING")
-
-        self.log(f"\n{'='*50}", "INFO")
-        self.log(f"⚠️ 签名已替换，完整性校验应当失败！", "WARNING")
-        self.log(f"{'='*50}", "INFO")
+            self.log(f"  {label}: {md5}", "INFO")
+        self.log(f"\n⚠️ 签名已替换，完整性校验应当失败！", "WARNING")
 
     def verify_apk(self):
         apk = self.apk_path.get()
