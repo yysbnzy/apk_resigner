@@ -1,52 +1,51 @@
-﻿@echo off
-chcp 65001 >nul
-title APK签名替换工具 - 便携版打包
+@echo off
+title APK Resigner - Portable Build
 
 echo ==========================================
-echo APK 签名替换工具 - 便携版打包脚本
+echo APK Resigner - Portable Build Script
 echo ==========================================
 echo.
 
-REM 检查 Python
+REM Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [✗] 未找到 Python，请先安装 Python 3.8+
-    echo     下载地址: https://www.python.org/downloads/
+    echo [FAIL] Python not found. Please install Python 3.8+
+    echo        https://www.python.org/downloads/
     pause
     exit /b 1
 )
-echo [✓] Python 已安装
+echo [OK] Python found
 
-REM 检查 PyInstaller
+REM Check PyInstaller
 python -c "import PyInstaller" >nul 2>&1
 if errorlevel 1 (
-    echo [+] 正在安装 PyInstaller...
+    echo [INFO] Installing PyInstaller...
     python -m pip install pyinstaller
     if errorlevel 1 (
-        echo [✗] PyInstaller 安装失败
+        echo [FAIL] PyInstaller installation failed
         pause
         exit /b 1
     )
 )
-echo [✓] PyInstaller 已就绪
+echo [OK] PyInstaller ready
 echo.
 
-REM 执行便携包构建
-echo [+] 开始构建便携包...
+REM Run build
+echo [INFO] Starting build...
 echo.
 
 python build_portable.py
 
 if errorlevel 1 (
     echo.
-    echo [✗] 构建失败
+    echo [FAIL] Build failed
     pause
     exit /b 1
 )
 
 echo.
 echo ==========================================
-echo [✓] 构建完成！
+echo [OK] Build complete!
 echo ==========================================
 echo.
 
