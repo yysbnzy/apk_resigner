@@ -443,23 +443,19 @@ class APKResignerGUI:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         keystore = self._get_keystore()
 
-        extracted = self.work_dir / f"extracted_{timestamp}"
-        self._unzip_apk(apk, extracted)
+        # 复制原 APK，保留原始结构（文件顺序、对齐信息）
+        temp_apk = self.work_dir / f"temp_{timestamp}.apk"
+        shutil.copy2(apk, temp_apk)
 
-        # 添加 test.txt 到指定路径
-        test_file = extracted / "assets" / "test.txt"
-        test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("MODIFIED BY APK_RESIGNER", encoding="utf-8")
+        # 直接在 APK 中追加 test.txt，不解包重打包
+        with zipfile.ZipFile(temp_apk, 'a') as zf:
+            zf.writestr('assets/test.txt', 'MODIFIED BY APK_RESIGNER')
+
         self.log(f"  ✓ 已添加 test.txt", "SUCCESS")
         self.log(f"    路径: assets/test.txt", "INFO")
-        self.log(f"    大小: {test_file.stat().st_size} 字节", "INFO")
-        self.log(f"    内容: {test_file.read_text().strip()}", "INFO")
-
-        unsigned = self.work_dir / f"unsigned_{timestamp}.apk"
-        self._rezip_apk(extracted, unsigned)
 
         aligned = self.work_dir / f"aligned_{timestamp}.apk"
-        self._zipalign(unsigned, aligned)
+        self._zipalign(temp_apk, aligned)
 
         scheme = self.detected_scheme.get()
         self._sign_with_scheme(aligned, keystore, scheme)
