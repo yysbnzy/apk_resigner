@@ -339,11 +339,9 @@ def main():
     # 脚本所在目录即项目目录
     project_dir = Path(__file__).parent
     builder = PortableBuilder(project_dir)
-    builder.build()
-
-    print()
-    input("按回车键退出...")
+    success = builder.build()
+    return 0 if success else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
