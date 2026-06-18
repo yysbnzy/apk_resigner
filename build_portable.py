@@ -36,6 +36,20 @@ class PortableBuilder:
     def success(self, msg):
         print(f"[✓] {msg}")
 
+    def _ensure_cryptography(self):
+        """检查并安装 cryptography 模块"""
+        try:
+            import cryptography
+            print(f"[✓] cryptography 已安装 (版本: {cryptography.__version__})")
+        except ImportError:
+            print("[⚠] cryptography 未安装，正在安装...")
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "cryptography"], capture_output=True, text=True)
+            if result.returncode == 0:
+                print("[✓] cryptography 安装成功")
+            else:
+                print(f"[✗] cryptography 安装失败: {result.stderr}")
+                print("    请手动运行: pip install cryptography")
+
     # ========== 下载 apktool ==========
     def download_apktool(self):
         """下载 apktool.jar"""
@@ -232,6 +246,7 @@ class PortableBuilder:
         print()
 
         # 1. 下载/收集工具
+        self._ensure_cryptography()
         self.download_apktool()
         self.collect_build_tools()
         self.collect_jdk()
@@ -265,6 +280,11 @@ class PortableBuilder:
             "--windowed",
             "--name", "APK签名替换工具",
             "--add-data", add_data,
+            "--hidden-import", "cryptography",
+            "--hidden-import", "cryptography.hazmat.primitives",
+            "--hidden-import", "cryptography.hazmat.primitives.asymmetric",
+            "--hidden-import", "cryptography.hazmat.primitives.serialization",
+            "--hidden-import", "cryptography.x509",
             "--clean",
             str(self.project_dir / "apk_resigner_gui.py")
         ]
