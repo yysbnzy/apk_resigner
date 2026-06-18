@@ -12,11 +12,15 @@ import base64
 from pathlib import Path
 from datetime import datetime
 
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives.serialization import pkcs7
+try:
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa, padding
+    from cryptography.hazmat.primitives.serialization import pkcs7
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
 
 
 class PurePythonAPKSigner:
@@ -25,6 +29,7 @@ class PurePythonAPKSigner:
     def __init__(self, work_dir="./apk_work"):
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(exist_ok=True)
+        self._available = CRYPTO_AVAILABLE
 
     def generate_keystore(self, keystore_path, alias="testkey", password="123456"):
         """Generate a test RSA key pair (returns (private_key, cert_pem))"""

@@ -23,7 +23,12 @@ except ImportError:
     import Tkinter as tk
     from Tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from pure_python_sign import PurePythonAPKSigner
+# Lazy import pure_python_sign to avoid cryptography dependency at startup
+try:
+    from pure_python_sign import PurePythonAPKSigner, CRYPTO_AVAILABLE
+except ImportError:
+    PurePythonAPKSigner = None
+    CRYPTO_AVAILABLE = False
 
 
 class ToolManager:
@@ -157,7 +162,10 @@ class APKResignerGUI:
         self.has_v4 = False
 
         self.tools = ToolManager()
-        self.pure_python = PurePythonAPKSigner(str(self.work_dir))
+        if CRYPTO_AVAILABLE:
+            self.pure_python = PurePythonAPKSigner(str(self.work_dir))
+        else:
+            self.pure_python = None
         self.pure_python_mode = False
 
         self.build_ui()
