@@ -408,7 +408,9 @@ class APKResignerGUI:
         scheme = self.detected_scheme.get()
         self._sign_with_scheme(aligned, keystore, scheme)
 
-        final = self.work_dir / f"resigned_{Path(apk).stem}_{timestamp}.apk"
+        # 输出到原 APK 同目录
+        apk_path = Path(apk)
+        final = apk_path.parent / f"{apk_path.stem}_resigned_{timestamp}.apk"
         shutil.copy(aligned, final)
 
         self.log(f"\n✅ 一键重签名完成！", "SUCCESS")
@@ -460,7 +462,9 @@ class APKResignerGUI:
         scheme = self.detected_scheme.get()
         self._sign_with_scheme(aligned, keystore, scheme)
 
-        final = self.work_dir / f"resigned_{Path(apk).stem}_{timestamp}.apk"
+        # 输出到原 APK 同目录，命名：原文件名_resigned_时间戳.apk
+        apk_path = Path(apk)
+        final = apk_path.parent / f"{apk_path.stem}_resigned_{timestamp}.apk"
         shutil.copy(aligned, final)
 
         self.log(f"\n✅ 完成！", "SUCCESS")
