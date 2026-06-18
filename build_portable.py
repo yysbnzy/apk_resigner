@@ -184,12 +184,27 @@ class PortableBuilder:
                     self.success(f"  复制: {fname}")
                     found = True
 
-            # 复制必要的 DLL (Windows)
-            dlls = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
-            for dll in dlls:
+            # 复制 JDK 必需 DLL (Windows)
+            jdk_dlls = ["jli.dll", "java.dll", "awt.dll", "verify.dll", "javajpeg.dll", 
+                        "net.dll", "nio.dll", "zip.dll", "instrument.dll",
+                        "management.dll", "management_ext.dll", "prefs.dll", "rmi.dll",
+                        "saproc.dll", "sunmscapi.dll", "ucrtbase.dll",
+                        "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+            for dll in jdk_dlls:
                 src = java_bin / dll
                 if src.exists():
                     shutil.copy2(src, java_dir / dll)
+                    self.success(f"  复制: {dll}")
+
+            # 复制 jvm.dll (在 bin/server/ 或 bin/client/ 下)
+            for jvm_subdir in ["server", "client"]:
+                jvm_src = java_bin / jvm_subdir / "jvm.dll"
+                if jvm_src.exists():
+                    jvm_dst = java_dir / jvm_subdir
+                    jvm_dst.mkdir(exist_ok=True)
+                    shutil.copy2(jvm_src, jvm_dst / "jvm.dll")
+                    self.success(f"  复制: {jvm_subdir}/jvm.dll")
+                    break
 
             # 复制 JRE 核心模块（最小化）
             if found:
