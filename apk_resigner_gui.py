@@ -23,6 +23,15 @@ except ImportError:
     import Tkinter as tk
     from Tkinter import ttk, filedialog, messagebox, scrolledtext
 
+# 新增 ADB 模块导入
+try:
+    from adb_manager import ADBManager, DeviceInfo, PackageInfo, ExportResult, ADBError
+    from backup_manager import BackupManager, BackupInfo, BackupResult
+    from install_manager import InstallManager, InstallResult, InstallLog
+    ADB_AVAILABLE = True
+except ImportError:
+    ADB_AVAILABLE = False
+
 # Lazy import pure_python_sign to avoid cryptography dependency at startup
 try:
     from pure_python_sign import PurePythonAPKSigner, CRYPTO_AVAILABLE
@@ -188,6 +197,17 @@ class APKResignerGUI:
             self.pure_python = None
         self.pure_python_mode = False
 
+        # ────────────────────────────────────────
+        # 新增 ADB 相关初始化
+        # ────────────────────────────────────────
+        self.adb_manager = None
+        self.backup_manager = None
+        self.install_manager = None
+        self.selected_device = None
+        self.selected_package = tk.StringVar()
+        self.scanned_packages = []  # 扫描到的应用列表
+        self._init_adb_modules()
+
         self.build_ui()
         self.log(self.tools.get_info(), "INFO")
 
@@ -200,6 +220,20 @@ class APKResignerGUI:
             self.btn_setup.config(state="disabled")
         else:
             self.status_var.set("就绪 (全部内置)")
+
+    def _init_adb_modules(self):
+        """初始化 ADB 相关模块"""
+        if not ADB_AVAILABLE:
+            print("ADB 模块未加载（adb_manager.py 不存在）")
+            return
+        
+        try:
+            self.adb_manager = ADBManager(self.tools)
+            self.backup_manager = BackupManager()
+            self.install_manager = InstallManager(self.adb_manager)
+            print("ADB 模块初始化完成")
+        except Exception as e:
+            print(f"ADB 模块初始化失败: {e}")
 
     def build_ui(self):
         main_frame = ttk.Frame(self.root, padding="10")
@@ -278,6 +312,657 @@ class APKResignerGUI:
         status_bar.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
         main_frame.rowconfigure(6, weight=1)
+
+        # ────────────────────────────────────────
+        # 新增 ADB Notebook 标签页
+        # ────────────────────────────────────────
+        if ADB_AVAILABLE:
+            self._build_adb_notebook(main_frame)
+
+    def _build_adb_notebook(self, main_frame):
+        """构建 ADB 相关 Notebook 标签页"""
+        # Notebook 容器
+        notebook = ttk.Notebook(main_frame)
+        notebook.grid(row=8, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        main_frame.rowconfigure(8, weight=2)
+
+        # Tab 1: 设备连接
+        device_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(device_tab, text="📱 ADB设备")
+        self._build_device_tab(device_tab)
+
+        # Tab 2: 应用列表
+        app_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(app_tab, text="📦 应用列表")
+        self._build_app_tab(app_tab)
+
+        # Tab 3: 备份还原
+        backup_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(backup_tab, text="💾 备份还原")
+        self._build_backup_tab(backup_tab)
+
+        # Tab 4: 操作日志（扩展现有日志）
+        log_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(log_tab, text="📝 ADB日志")
+        self._build_adb_log_tab(log_tab)
+
+    def _build_device_tab(self, parent):
+        """构建设备连接标签页"""
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=2)
+        parent.rowconfigure(1, weight=1)
+
+        # 左侧：设备列表
+        left_frame = ttk.LabelFrame(parent, text="设备列表", padding="5")
+        left_frame.grid(row=0, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
+
+        # 设备列表 Treeview
+        columns = ('serial', 'state', 'model')
+        self.device_tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=8)
+        self.device_tree.heading('serial', text='序列号')
+        self.device_tree.heading('state', text='状态')
+        self.device_tree.heading('model', text='型号')
+        self.device_tree.column('serial', width=120)
+        self.device_tree.column('state', width=80)
+        self.device_tree.column('model', width=150)
+        self.device_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 滚动条
+        vsb = ttk.Scrollbar(left_frame, orient="vertical", command=self.device_tree.yview)
+        vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.device_tree.configure(yscrollcommand=vsb.set)
+
+        # 设备列表按钮
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        
+        ttk.Button(btn_frame, text="🔄 刷新", command=self._refresh_devices, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="✅ 连接", command=self._connect_device, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="❌ 断开", command=self._disconnect_device, width=12).pack(side=tk.LEFT, padx=2)
+
+        # 右侧：设备详情
+        right_frame = ttk.LabelFrame(parent, text="设备详情", padding="10")
+        right_frame.grid(row=0, column=1, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(1, weight=1)
+
+        # 状态指示器
+        self.device_status_label = ttk.Label(right_frame, text="🔴 未连接", font=("Microsoft YaHei", 12, "bold"), foreground="red")
+        self.device_status_label.grid(row=0, column=0, sticky=tk.W, pady=5)
+
+        # 详情文本框
+        self.device_info_text = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, height=10, font=("Consolas", 9))
+        self.device_info_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.device_info_text.insert(tk.END, "点击「刷新」查看已连接设备\n")
+        self.device_info_text.config(state="disabled")
+
+    def _build_app_tab(self, parent):
+        """构建应用列表标签页"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+
+        # 顶部控制栏
+        ctrl_frame = ttk.Frame(parent)
+        ctrl_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        # 标签页切换
+        self.app_tab_var = tk.StringVar(value="third_party")
+        ttk.Radiobutton(ctrl_frame, text="第三方应用", variable=self.app_tab_var, 
+                       value="third_party", command=self._switch_app_tab).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(ctrl_frame, text="系统预装", variable=self.app_tab_var,
+                       value="system", command=self._switch_app_tab).pack(side=tk.LEFT, padx=5)
+
+        # 搜索框
+        ttk.Label(ctrl_frame, text="搜索:").pack(side=tk.LEFT, padx=(20, 5))
+        self.app_search_var = tk.StringVar()
+        ttk.Entry(ctrl_frame, textvariable=self.app_search_var, width=30).pack(side=tk.LEFT, padx=5)
+        ttk.Button(ctrl_frame, text="🔍", command=self._filter_apps, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ctrl_frame, text="🔄 扫描", command=self._scan_apps, width=10).pack(side=tk.LEFT, padx=10)
+
+        # 应用列表 Treeview
+        columns = ('name', 'package', 'version', 'type', 'path')
+        self.app_tree = ttk.Treeview(parent, columns=columns, show='headings', height=12)
+        self.app_tree.heading('name', text='应用名称')
+        self.app_tree.heading('package', text='包名')
+        self.app_tree.heading('version', text='版本')
+        self.app_tree.heading('type', text='类型')
+        self.app_tree.heading('path', text='路径')
+        self.app_tree.column('name', width=100)
+        self.app_tree.column('package', width=200)
+        self.app_tree.column('version', width=60)
+        self.app_tree.column('type', width=60)
+        self.app_tree.column('path', width=300)
+        self.app_tree.grid(row=1, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # 滚动条
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=self.app_tree.yview)
+        vsb.grid(row=1, column=1, rowspan=2, sticky=(tk.N, tk.S))
+        self.app_tree.configure(yscrollcommand=vsb.set)
+
+        # 操作按钮
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
+
+    def _build_backup_tab(self, parent):
+        """构建备份还原标签页"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+
+        # 顶部选择
+        top_frame = ttk.Frame(parent)
+        top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Label(top_frame, text="应用:").pack(side=tk.LEFT, padx=5)
+        self.backup_package_var = tk.StringVar()
+        ttk.Combobox(top_frame, textvariable=self.backup_package_var, width=30, state="readonly").pack(side=tk.LEFT, padx=5)
+        ttk.Button(top_frame, text="🔄 刷新", command=self._refresh_backups, width=10).pack(side=tk.LEFT, padx=10)
+
+        # 备份列表 Treeview
+        columns = ('time', 'device', 'version', 'size', 'actions')
+        self.backup_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
+        self.backup_tree.heading('time', text='备份时间')
+        self.backup_tree.heading('device', text='设备')
+        self.backup_tree.heading('version', text='版本')
+        self.backup_tree.heading('size', text='大小')
+        self.backup_tree.heading('actions', text='操作')
+        self.backup_tree.column('time', width=150)
+        self.backup_tree.column('device', width=120)
+        self.backup_tree.column('version', width=80)
+        self.backup_tree.column('size', width=80)
+        self.backup_tree.column('actions', width=150)
+        self.backup_tree.grid(row=1, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # 操作按钮
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Button(btn_frame, text="♻️ 还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🗑️ 删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🧹 清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
+
+    def _build_adb_log_tab(self, parent):
+        """构建 ADB 操作日志标签页"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        self.adb_log_text = scrolledtext.ScrolledText(parent, wrap=tk.WORD, height=15, font=("Consolas", 9))
+        self.adb_log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        self.adb_log_text.tag_config("INFO", foreground="blue")
+        self.adb_log_text.tag_config("SUCCESS", foreground="green")
+        self.adb_log_text.tag_config("ERROR", foreground="red")
+        self.adb_log_text.tag_config("WARNING", foreground="orange")
+        self.adb_log_text.tag_config("ADB", foreground="purple")
+
+        ttk.Button(parent, text="🧹 清空", command=self._clear_adb_log, width=10).grid(row=1, column=0, sticky=tk.E, pady=5)
+
+    def _adb_log(self, message, level="INFO"):
+        """ADB 专用日志输出"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.adb_log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
+        self.adb_log_text.see(tk.END)
+        self.root.update_idletasks()
+        # 同时输出到主日志
+        self.log(f"[ADB] {message}", level)
+
+    def _clear_adb_log(self):
+        """清空 ADB 日志"""
+        self.adb_log_text.delete(1.0, tk.END)
+
+    # ────────────────────────────────────────
+    # ADB 设备操作
+    # ────────────────────────────────────────
+
+    def _refresh_devices(self):
+        """刷新设备列表"""
+        if not self.adb_manager:
+            self._adb_log("ADB 模块未加载", "ERROR")
+            return
+        
+        self._adb_log("刷新设备列表...")
+        self.device_tree.delete(*self.device_tree.get_children())
+        
+        try:
+            devices = self.adb_manager.list_devices()
+            self._adb_log(f"发现 {len(devices)} 个设备")
+            
+            for dev in devices:
+                state_text = {
+                    'device': '✅ 已连接',
+                    'unauthorized': '⚠️ 未授权',
+                    'offline': '❌ 离线'
+                }.get(dev.state, dev.state)
+                
+                self.device_tree.insert('', tk.END, values=(
+                    dev.serial, state_text, dev.model
+                ))
+                
+                if dev.state == 'unauthorized':
+                    self._adb_log(f"设备 {dev.serial} 未授权，请在设备上点击「允许」", "WARNING")
+        
+        except Exception as e:
+            self._adb_log(f"刷新失败: {e}", "ERROR")
+
+    def _connect_device(self):
+        """连接选中设备"""
+        selection = self.device_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择设备")
+            return
+        
+        item = self.device_tree.item(selection[0])
+        serial = item['values'][0]
+        
+        try:
+            self.adb_manager.select_device(serial)
+            self.selected_device = serial
+            
+            # 更新状态
+            self.device_status_label.config(text=f"🟢 已连接: {serial}", foreground="green")
+            
+            # 获取设备信息
+            info = self.adb_manager.get_device_info()
+            self.device_info_text.config(state="normal")
+            self.device_info_text.delete(1.0, tk.END)
+            
+            for key, value in info.items():
+                self.device_info_text.insert(tk.END, f"{key}: {value}\n")
+            
+            self.device_info_text.config(state="disabled")
+            self._adb_log(f"已连接设备: {serial}", "SUCCESS")
+            self.status_var.set(f"已连接: {info.get('model', serial)}")
+            
+        except Exception as e:
+            self._adb_log(f"连接失败: {e}", "ERROR")
+            messagebox.showerror("错误", f"连接设备失败: {e}")
+
+    def _disconnect_device(self):
+        """断开当前设备"""
+        self.selected_device = None
+        if self.adb_manager:
+            self.adb_manager.selected_device = None
+        
+        self.device_status_label.config(text="🔴 未连接", foreground="red")
+        self.device_info_text.config(state="normal")
+        self.device_info_text.delete(1.0, tk.END)
+        self.device_info_text.insert(tk.END, "点击「刷新」查看已连接设备\n")
+        self.device_info_text.config(state="disabled")
+        
+        self._adb_log("已断开设备连接")
+        self.status_var.set("就绪")
+
+    # ────────────────────────────────────────
+    # ADB 应用操作
+    # ────────────────────────────────────────
+
+    def _scan_apps(self):
+        """扫描车机应用"""
+        if not self.adb_manager or not self.adb_manager.selected_device:
+            messagebox.showwarning("提示", "请先连接设备")
+            return
+        
+        self._adb_log("扫描车机应用...")
+        self.app_tree.delete(*self.app_tree.get_children())
+        self.scanned_packages = []
+        
+        try:
+            packages = self.adb_manager.scan_packages()
+            self.scanned_packages = packages
+            
+            self._adb_log(f"扫描完成: {len(packages)} 个应用")
+            self._refresh_app_tree()
+            
+        except Exception as e:
+            self._adb_log(f"扫描失败: {e}", "ERROR")
+            messagebox.showerror("错误", f"扫描应用失败: {e}")
+
+    def _refresh_app_tree(self):
+        """刷新应用列表显示"""
+        self.app_tree.delete(*self.app_tree.get_children())
+        
+        filter_type = self.app_tab_var.get()
+        keyword = self.app_search_var.get().lower()
+        
+        for pkg in self.scanned_packages:
+            # 类型过滤
+            if filter_type == "system" and pkg.app_type != "SYSTEM":
+                continue
+            if filter_type == "third_party" and pkg.app_type != "THIRD_PARTY":
+                continue
+            
+            # 关键词过滤
+            if keyword and keyword not in pkg.name.lower() and keyword not in pkg.apk_path.lower():
+                continue
+            
+            display_name = pkg.name.split('.')[-1] if pkg.name else ""
+            type_text = "系统" if pkg.app_type == "SYSTEM" else "第三方"
+            
+            self.app_tree.insert('', tk.END, values=(
+                display_name, pkg.name, pkg.version, type_text, pkg.apk_path
+            ))
+
+    def _switch_app_tab(self):
+        """切换应用标签页"""
+        self._refresh_app_tree()
+
+    def _filter_apps(self):
+        """过滤应用"""
+        self._refresh_app_tree()
+
+    def _show_app_details(self):
+        """显示应用详情"""
+        selection = self.app_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择应用")
+            return
+        
+        item = self.app_tree.item(selection[0])
+        package_name = item['values'][1]
+        
+        try:
+            details = self.adb_manager.get_package_details(package_name)
+            info = f"包名: {package_name}\n"
+            for key, value in details.items():
+                info += f"{key}: {value}\n"
+            messagebox.showinfo("应用详情", info)
+        except Exception as e:
+            self._adb_log(f"获取详情失败: {e}", "ERROR")
+
+    def _export_only(self):
+        """仅导出 APK"""
+        selection = self.app_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择应用")
+            return
+        
+        item = self.app_tree.item(selection[0])
+        package_name = item['values'][1]
+        
+        self._adb_log(f"导出应用: {package_name}")
+        
+        try:
+            result = self.adb_manager.export_apk(package_name, self.work_dir)
+            if result.success:
+                self._adb_log(f"导出成功: {result.base_apk}", "SUCCESS")
+                messagebox.showinfo("导出成功", f"APK 已导出到:\n{result.base_apk}")
+            else:
+                self._adb_log(f"导出失败: {result.error}", "ERROR")
+                messagebox.showerror("导出失败", result.error)
+        except Exception as e:
+            self._adb_log(f"导出异常: {e}", "ERROR")
+
+    def _one_click_process(self):
+        """一键处理：导出 → 备份 → 签名 → 安装"""
+        selection = self.app_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择应用")
+            return
+        
+        item = self.app_tree.item(selection[0])
+        package_name = item['values'][1]
+        
+        self._adb_log(f"开始一键处理: {package_name}")
+        
+        # 在后台线程执行
+        thread = threading.Thread(target=self._do_one_click_process, args=(package_name,))
+        thread.daemon = True
+        thread.start()
+
+    def _do_one_click_process(self, package_name):
+        """一键处理的后台线程"""
+        try:
+            # 1. 导出 APK
+            self._adb_log(f"[1/5] 导出 APK...")
+            export_result = self.adb_manager.export_apk(package_name, self.work_dir)
+            if not export_result.success:
+                self._adb_log(f"导出失败: {export_result.error}", "ERROR")
+                return
+            
+            self._adb_log(f"  ✓ 导出成功: {export_result.base_apk}", "SUCCESS")
+            
+            # 2. 自动备份
+            self._adb_log(f"[2/5] 创建备份...")
+            device_info = self.adb_manager.get_device_info()
+            backup_result = self.backup_manager.create_backup_from_export(export_result, device_info)
+            if backup_result.success:
+                self._adb_log(f"  ✓ 备份完成: {backup_result.backup_dir}", "SUCCESS")
+            
+            # 3. 签名（复用现有方法）
+            self._adb_log(f"[3/5] 执行签名...")
+            base_apk = export_result.base_apk
+            self.apk_path.set(base_apk)
+            self.detect_apk_scheme(base_apk)
+            
+            # 在主线程执行签名（因为 GUI 操作）
+            self.root.after(0, lambda: self._run_sign_and_install(base_apk, package_name))
+            
+        except Exception as e:
+            self._adb_log(f"一键处理失败: {e}", "ERROR")
+            self.root.after(0, lambda: messagebox.showerror("错误", f"一键处理失败: {e}"))
+
+    def _run_sign_and_install(self, base_apk, package_name):
+        """在主线程执行签名和安装"""
+        try:
+            # 签名
+            self._full_process(base_apk)
+            
+            # 查找签名后的 APK
+            apk_path = Path(base_apk)
+            resigned_pattern = f"{apk_path.stem}_resigned_*.apk"
+            import glob
+            resigned_files = glob.glob(str(apk_path.parent / resigned_pattern))
+            
+            if not resigned_files:
+                self._adb_log("未找到签名后的 APK", "ERROR")
+                return
+            
+            resigned_apk = resigned_files[0]
+            self._adb_log(f"  ✓ 签名完成: {resigned_apk}", "SUCCESS")
+            
+            # 4. 显示安装选项
+            self._adb_log(f"[4/5] 等待安装方式选择...")
+            self._show_install_dialog(resigned_apk, package_name)
+            
+        except Exception as e:
+            self._adb_log(f"签名失败: {e}", "ERROR")
+            messagebox.showerror("错误", f"签名失败: {e}")
+
+    def _show_install_dialog(self, apk_path, package_name):
+        """显示安装方式选择对话框"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("安装方式选择")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=f"APK 已签名: {Path(apk_path).name}", font=("Microsoft YaHei", 10, "bold")).pack(pady=10)
+
+        def install_overwrite():
+            dialog.destroy()
+            self._do_install("overwrite", apk_path)
+
+        def install_uninstall():
+            dialog.destroy()
+            self._do_install("uninstall", apk_path, package_name)
+
+        def skip_install():
+            dialog.destroy()
+            self._adb_log("[5/5] 用户选择跳过安装")
+
+        ttk.Button(dialog, text="直接覆盖 (-r -d -t)", command=install_overwrite, width=25).pack(pady=5)
+        ttk.Button(dialog, text="卸载后安装 (⚠️ 清除数据)", command=install_uninstall, width=25).pack(pady=5)
+        ttk.Button(dialog, text="仅保存，不安装", command=skip_install, width=25).pack(pady=5)
+
+        ttk.Label(dialog, text="⚠️ 预期结果: 签名不匹配，安装将被拒绝", foreground="orange").pack(pady=10)
+
+    def _do_install(self, mode, apk_path, package_name=None):
+        """执行安装"""
+        self._adb_log(f"[5/5] 安装测试...")
+        
+        try:
+            if mode == "overwrite":
+                result = self.install_manager.install_overwrite(apk_path)
+            else:
+                result = self.install_manager.install_uninstall_then_install(package_name, apk_path)
+            
+            # 解析结果
+            if result.status == "signature_conflict":
+                self._adb_log(f"  ✓ 签名验证拒绝正常 ({result.code})", "SUCCESS")
+                self.root.after(0, lambda: messagebox.showinfo("验证通过", 
+                    "签名不匹配，安装被拒绝。\n\n这是预期行为，说明签名验证机制工作正常。"))
+            elif result.status == "success":
+                self._adb_log(f"  ⚠ APK 安装成功，签名验证可能被绕过", "WARNING")
+                self.root.after(0, lambda: messagebox.showwarning("异常", 
+                    "APK 被成功安装，可能存在签名验证绕过风险！"))
+            else:
+                self._adb_log(f"  ✗ 安装失败: {result.message}", "ERROR")
+                self.root.after(0, lambda: messagebox.showerror("安装失败", result.message))
+        
+        except Exception as e:
+            self._adb_log(f"安装异常: {e}", "ERROR")
+
+    # ────────────────────────────────────────
+    # 备份操作
+    # ────────────────────────────────────────
+
+    def _refresh_backups(self):
+        """刷新备份列表"""
+        self.backup_tree.delete(*self.backup_tree.get_children())
+        
+        package = self.backup_package_var.get()
+        backups = self.backup_manager.list_backups(package if package else None)
+        
+        for b in backups:
+            # 使用 tags 存储 backup_dir，选中时可直接获取
+            self.backup_tree.insert(
+                '', tk.END,
+                values=(
+                    b.display_time, b.device_model, b.version_name, b.display_size, b.package_name
+                ),
+                tags=(b.backup_dir,)
+            )
+        
+        self._adb_log(f"备份列表: {len(backups)} 个")
+
+    def _restore_selected_backup(self):
+        """还原选中的备份"""
+        selection = self.backup_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择备份")
+            return
+        
+        # 从 tags 获取 backup_dir
+        item = self.backup_tree.item(selection[0])
+        backup_dir = item['tags'][0] if item.get('tags') else None
+        if not backup_dir:
+            messagebox.showerror("错误", "无法获取备份路径")
+            return
+        
+        # 获取备份信息
+        backup_info = self.backup_manager.get_backup(backup_dir)
+        if not backup_info:
+            messagebox.showerror("错误", "备份信息无效或已损坏")
+            return
+        
+        if not messagebox.askyesno(
+            "确认还原",
+            f"确定要还原此备份？\n\n"
+            f"应用: {backup_info.package_name}\n"
+            f"版本: {backup_info.version_name}\n"
+            f"设备: {backup_info.device_model}\n"
+            f"时间: {backup_info.display_time}"
+        ):
+            return
+        
+        self._adb_log(f"开始还原备份: {backup_info.package_name}")
+        
+        # 在后台线程执行还原
+        thread = threading.Thread(
+            target=self._do_restore,
+            args=(backup_dir, backup_info.package_name)
+        )
+        thread.daemon = True
+        thread.start()
+    
+    def _do_restore(self, backup_dir: str, package_name: str):
+        """执行还原的后台线程"""
+        try:
+            result = self.backup_manager.restore_backup(
+                backup_dir,
+                self.install_manager
+            )
+            
+            if result.success:
+                self._adb_log(f"还原成功: {result.message}", "SUCCESS")
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "还原成功",
+                    f"应用 {package_name} 已还原\n\n{result.message}"
+                ))
+            else:
+                self._adb_log(f"还原失败: {result.message}", "ERROR")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "还原失败",
+                    f"应用 {package_name} 还原失败\n\n{result.message}"
+                ))
+        except Exception as e:
+            self._adb_log(f"还原异常: {e}", "ERROR")
+            self.root.after(0, lambda: messagebox.showerror("错误", f"还原异常: {e}"))
+
+    def _delete_selected_backup(self):
+        """删除选中的备份"""
+        selection = self.backup_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择备份")
+            return
+        
+        # 从 tags 获取 backup_dir
+        item = self.backup_tree.item(selection[0])
+        backup_dir = item['tags'][0] if item.get('tags') else None
+        if not backup_dir:
+            messagebox.showerror("错误", "无法获取备份路径")
+            return
+        
+        # 获取备份信息用于确认
+        backup_info = self.backup_manager.get_backup(backup_dir)
+        pkg_name = backup_info.package_name if backup_info else "未知"
+        
+        if not messagebox.askyesno(
+            "确认删除",
+            f"确定要删除此备份？\n\n"
+            f"应用: {pkg_name}\n"
+            f"路径: {backup_dir}\n\n"
+            f"删除后无法恢复！"
+        ):
+            return
+        
+        self._adb_log(f"删除备份: {backup_dir}")
+        
+        try:
+            success = self.backup_manager.delete_backup(backup_dir)
+            if success:
+                self._adb_log("备份已删除", "SUCCESS")
+                self._refresh_backups()  # 刷新列表
+            else:
+                self._adb_log("删除失败", "ERROR")
+        except Exception as e:
+            self._adb_log(f"删除异常: {e}", "ERROR")
+
+    def _cleanup_old_backups(self):
+        """清理旧备份"""
+        if not messagebox.askyesno("确认", "清理旧备份？"):
+            return
+        
+        try:
+            result = self.backup_manager.cleanup_old_backups(keep_count=5, keep_days=30)
+            self._adb_log(f"清理完成: 删除 {result['deleted']} 个, 保留 {result['kept']} 个", "SUCCESS")
+        except Exception as e:
+            self._adb_log(f"清理失败: {e}", "ERROR")
 
     def _tooltip(self, widget, text):
         def enter(event):
