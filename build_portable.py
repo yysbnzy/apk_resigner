@@ -184,19 +184,71 @@ class PortableBuilder:
                 self.log(f"  清理旧 Java 环境...")
                 shutil.rmtree(target_java)
 
-            # 复制整个 bin/ 目录
+            # 复制关键 bin/ 文件（只保留必需）
             target_bin = target_java / "bin"
             target_bin.mkdir(parents=True, exist_ok=True)
-            for item in java_bin.iterdir():
-                if item.is_file():
-                    shutil.copy2(item, target_bin / item.name)
-                elif item.is_dir() and item.name == "server":
-                    # 复制 server/ 子目录（包含 jvm.dll）
-                    shutil.copytree(item, target_bin / "server", dirs_exist_ok=True)
-            self.success(f"  复制: bin/")
+            
+            # 必需的可执行文件
+            required_exes = ["java.exe", "keytool.exe", "jarsigner.exe"]
+            for exe in required_exes:
+                src = java_bin / exe
+                if src.exists():
+                    shutil.copy2(src, target_bin / exe)
+                    self.success(f"  复制: {exe}")
+            
+            # 必需的 DLL（通过分析依赖确定）
+            required_dlls = [
+                "jli.dll", "java.dll", "awt.dll", "instrument.dll",
+                "javajpeg.dll", "jimage.dll", "management.dll", "management_ext.dll",
+                "msvcp140.dll", "net.dll", "nio.dll", "prefs.dll", "rmi.dll",
+                "saproc.dll", "sunmscapi.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+                "ucrtbase.dll", "syslookup.dll", "verify.dll", "zip.dll",
+                "dt_shmem.dll", "dt_socket.dll", "extnet.dll", "fontmanager.dll",
+                "freetype.dll", "j2gss.dll", "j2pcsc.dll", "j2pkcs11.dll", "jaas.dll",
+                "jawt.dll", "jdwp.dll", "jpackage.dll", "jsound.dll", "jsvml.dll",
+                "lcms.dll", "libattach.dll", "mlib_image.dll", "nio.dll",
+                "splashscreen.dll", "sspi_bridge.dll", "w2k_lsa_auth.dll",
+                "windowsaccessbridge-64.dll", "jabswitch.exe", "javaaccessbridge.dll",
+                "api-ms-win-core-console-l1-1-0.dll", "api-ms-win-core-console-l1-2-0.dll",
+                "api-ms-win-core-datetime-l1-1-0.dll", "api-ms-win-core-debug-l1-1-0.dll",
+                "api-ms-win-core-errorhandling-l1-1-0.dll", "api-ms-win-core-fibers-l1-1-0.dll",
+                "api-ms-win-core-fibers-l1-1-1.dll", "api-ms-win-core-file-l1-1-0.dll",
+                "api-ms-win-core-file-l1-2-0.dll", "api-ms-win-core-file-l2-1-0.dll",
+                "api-ms-win-core-handle-l1-1-0.dll", "api-ms-win-core-heap-l1-1-0.dll",
+                "api-ms-win-core-interlocked-l1-1-0.dll", "api-ms-win-core-kernel32-legacy-l1-1-1.dll",
+                "api-ms-win-core-libraryloader-l1-1-0.dll", "api-ms-win-core-localization-l1-2-0.dll",
+                "api-ms-win-core-memory-l1-1-0.dll", "api-ms-win-core-namedpipe-l1-1-0.dll",
+                "api-ms-win-core-processenvironment-l1-1-0.dll", "api-ms-win-core-processthreads-l1-1-0.dll",
+                "api-ms-win-core-processthreads-l1-1-1.dll", "api-ms-win-core-profile-l1-1-0.dll",
+                "api-ms-win-core-rtlsupport-l1-1-0.dll", "api-ms-win-core-string-l1-1-0.dll",
+                "api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-core-synch-l1-2-0.dll",
+                "api-ms-win-core-sysinfo-l1-1-0.dll", "api-ms-win-core-sysinfo-l1-2-0.dll",
+                "api-ms-win-core-timezone-l1-1-0.dll", "api-ms-win-core-util-l1-1-0.dll",
+                "api-ms-win-crt-conio-l1-1-0.dll", "api-ms-win-crt-convert-l1-1-0.dll",
+                "api-ms-win-crt-environment-l1-1-0.dll", "api-ms-win-crt-filesystem-l1-1-0.dll",
+                "api-ms-win-crt-heap-l1-1-0.dll", "api-ms-win-crt-locale-l1-1-0.dll",
+                "api-ms-win-crt-math-l1-1-0.dll", "api-ms-win-crt-multibyte-l1-1-0.dll",
+                "api-ms-win-crt-private-l1-1-0.dll", "api-ms-win-crt-process-l1-1-0.dll",
+                "api-ms-win-crt-runtime-l1-1-0.dll", "api-ms-win-crt-stdio-l1-1-0.dll",
+                "api-ms-win-crt-string-l1-1-0.dll", "api-ms-win-crt-time-l1-1-0.dll",
+                "api-ms-win-crt-utility-l1-1-0.dll",
+            ]
+            for dll in required_dlls:
+                src = java_bin / dll
+                if src.exists():
+                    shutil.copy2(src, target_bin / dll)
+            
+            # 复制 server/ 子目录（包含 jvm.dll），但跳过 classes.jsa 文件（节省空间）
+            server_src = java_bin / "server"
+            if server_src.exists():
+                server_dst = target_bin / "server"
+                shutil.copytree(server_src, server_dst, ignore=shutil.ignore_patterns("*.jsa"), dirs_exist_ok=True)
+                self.success(f"  复制: server/ (跳过 .jsa 缓存文件)")
+            
+            self.success(f"  bin/ 精简完成 ({len(required_exes)} exes + {len(required_dlls)} dlls)")
             found = True
 
-            # 复制 JRE 核心模块（最小化）
+            # 复制最小化 JRE
             if found:
                 self._copy_minimal_jre(jdk_root, target_java)
                 break
@@ -209,21 +261,76 @@ class PortableBuilder:
         return found
 
     def _copy_minimal_jre(self, jdk_root, target_java):
-        """复制最小化 JRE 运行环境"""
+        """复制最小化 JRE 运行环境（只保留必需文件）"""
         self.log("复制最小 JRE 环境...")
 
-        # 需要复制的目录
-        dirs_to_copy = ["lib", "conf"]
-        for dname in dirs_to_copy:
-            src = jdk_root / dname
-            if src.exists():
-                dst = target_java / dname
-                if dst.exists():
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
-                    "*.diz", "src.zip", "demo", "sample", "man"
-                ))
-                self.success(f"  复制: {dname}/")
+        # === lib/ 目录：只保留必需文件 ===
+        src_lib = jdk_root / "lib"
+        dst_lib = target_java / "lib"
+        if src_lib.exists():
+            dst_lib.mkdir(parents=True, exist_ok=True)
+            
+            # 必需文件清单
+            required_lib_files = [
+                "modules",           # JRE核心模块（最大但必需）
+                "jvm.cfg",           # JVM配置
+                "classlist",         # 类列表
+                # 安全相关
+                "security/cacerts",
+                "security/java.security",
+                "security/blocked.certs",
+                "security/public_suffix_list.dat",
+            ]
+            
+            for rel_path in required_lib_files:
+                src = src_lib / rel_path
+                if src.exists():
+                    dst = dst_lib / rel_path
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    if src.is_file():
+                        shutil.copy2(src, dst)
+                    self.success(f"  复制: lib/{rel_path}")
+            
+            # 字体配置（可选但推荐）
+            for font_file in ["fontconfig.bfc", "fontconfig.properties.src"]:
+                src = src_lib / font_file
+                if src.exists():
+                    shutil.copy2(src, dst_lib / font_file)
+
+        # === conf/ 目录：只保留网络和安全配置 ===
+        src_conf = jdk_root / "conf"
+        dst_conf = target_java / "conf"
+        if src_conf.exists():
+            dst_conf.mkdir(parents=True, exist_ok=True)
+            
+            required_conf_files = [
+                "net.properties",
+                "logging.properties",
+                "jaxp.properties",
+                "sound.properties",
+            ]
+            
+            for rel_path in required_conf_files:
+                src = src_conf / rel_path
+                if src.exists():
+                    dst = dst_conf / rel_path
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    if src.is_file():
+                        shutil.copy2(src, dst)
+                    self.success(f"  复制: conf/{rel_path}")
+            
+            # 安全策略
+            src_security = src_conf / "security" / "java.security"
+            if src_security.exists():
+                dst_security = dst_conf / "security" / "java.security"
+                dst_security.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_security, dst_security)
+                self.success(f"  复制: conf/security/java.security")
+
+        # === bin/ 目录：只复制必需文件（已在collect_jdk中处理）===
+        self.log("  bin/ 已精简复制")
+
+        self.success(f"  JRE 最小化完成")
 
     # ========== 收集 adb (可选) ==========
     def collect_adb(self):
