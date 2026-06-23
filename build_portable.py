@@ -28,24 +28,24 @@ class PortableBuilder:
         print(f"[+] {msg}")
 
     def warn(self, msg):
-        print(f"[⚠] {msg}")
+        print(f"[!] {msg}")
 
     def error(self, msg):
-        print(f"[✗] {msg}")
+        print(f"[X] {msg}")
 
     def success(self, msg):
-        print(f"[✓] {msg}")
+        print(f"[OK] {msg}")
 
     def _check_cryptography(self):
         """检查 cryptography 模块（可选，用于纯 Python 签名模式）"""
         try:
             import cryptography
-            print(f"[✓] cryptography 已安装 (版本: {cryptography.__version__})")
+            print(f"[OK] cryptography installed (version: {cryptography.__version__})")
             return True
         except ImportError:
-            print("[⚠] cryptography 未安装（可选，不影响主功能）")
-            print("    主签名功能使用内置 JDK 工具，无需 cryptography")
-            print("    如需纯 Python 签名模式，可手动运行: pip install cryptography")
+            print("[!] cryptography not installed (optional, does not affect main features)")
+            print("    Main signing uses built-in JDK tools, no cryptography needed")
+            print("    For pure Python signing mode, run: pip install cryptography")
             return False
 
     # ========== 下载 apktool ==========
@@ -79,6 +79,13 @@ class PortableBuilder:
     def collect_build_tools(self):
         """从本地 Android SDK 收集 zipalign、apksigner"""
         self.log("查找 Android SDK Build-Tools...")
+
+        # 先检查 _tools 目录是否已有这些工具
+        has_zipalign = (self.tools_dir / "zipalign.exe").exists() or (self.tools_dir / "zipalign").exists()
+        has_apksigner = (self.tools_dir / "apksigner.bat").exists() or (self.tools_dir / "apksigner").exists()
+        if has_zipalign and has_apksigner:
+            self.success("zipalign 和 apksigner 已存在于 _tools/ 目录")
+            return True
 
         # 常见 SDK 路径
         search_paths = [
@@ -138,15 +145,15 @@ class PortableBuilder:
 
     # ========== 收集 JDK 工具 ==========
     def collect_jdk(self):
-        """从本地 JDK 收集 keytool、jarsigner、java"""
+        """从本地 JDK 收集完整运行环境"""
         self.log("查找 JDK...")
 
         # 常见 JDK 路径
         search_paths = [
-            Path(os.environ.get("JAVA_HOME", "")) / "bin",
+            Path(os.environ.get("JAVA_HOME", "")),
             Path("C:/Program Files/Java"),
             Path("C:/Program Files/Eclipse Adoptium"),
-            Path.home() / ".sdkman" / "candidates" / "java" / "current" / "bin",
+            Path.home() / ".sdkman" / "candidates" / "java" / "current",
             Path("/usr/lib/jvm"),
             Path("/Library/Java/JavaVirtualMachines"),
         ]
@@ -156,43 +163,42 @@ class PortableBuilder:
             if not base.exists():
                 continue
 
-            # 如果是 bin 目录直接检查
-            if base.name == "bin" and (base / "java.exe").exists() or (base / "java").exists():
-                java_bin = base
+            # 找到 JDK 根目录（包含 bin/ 和 lib/ 的目录）
+            if base.name == "bin":
+                jdk_root = base.parent
+            elif (base / "bin" / "java.exe").exists() or (base / "bin" / "java").exists():
+                jdk_root = base
             else:
                 # 搜索子目录
                 java_bins = list(base.rglob("bin/java.exe")) + list(base.rglob("bin/java"))
                 if not java_bins:
                     continue
-                java_bin = java_bins[0].parent
+                jdk_root = java_bins[0].parent.parent
 
-            self.log(f"  发现 JDK: {java_bin}")
+            java_bin = jdk_root / "bin"
+            self.log(f"  发现 JDK: {jdk_root}")
 
-            files_to_copy = ["java", "java.exe", "keytool", "keytool.exe", 
-                           "jarsigner", "jarsigner.exe", "jmod", "jmod.exe",
-                           "jli.dll"]
+            # 清理旧的 _tools/java 目录，避免版本混合
+            target_java = self.tools_dir / "java"
+            if target_java.exists():
+                self.log(f"  清理旧 Java 环境...")
+                shutil.rmtree(target_java)
 
-            java_dir = self.tools_dir / "java" / "bin"
-            java_dir.mkdir(parents=True, exist_ok=True)
-
-            for fname in files_to_copy:
-                src = java_bin / fname
-                if src.exists():
-                    dst = java_dir / fname
-                    shutil.copy2(src, dst)
-                    self.success(f"  复制: {fname}")
-                    found = True
-
-            # 复制必要的 DLL (Windows)
-            dlls = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
-            for dll in dlls:
-                src = java_bin / dll
-                if src.exists():
-                    shutil.copy2(src, java_dir / dll)
+            # 复制整个 bin/ 目录
+            target_bin = target_java / "bin"
+            target_bin.mkdir(parents=True, exist_ok=True)
+            for item in java_bin.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, target_bin / item.name)
+                elif item.is_dir() and item.name == "server":
+                    # 复制 server/ 子目录（包含 jvm.dll）
+                    shutil.copytree(item, target_bin / "server", dirs_exist_ok=True)
+            self.success(f"  复制: bin/")
+            found = True
 
             # 复制 JRE 核心模块（最小化）
             if found:
-                self._copy_minimal_jre(java_bin.parent, self.tools_dir / "java")
+                self._copy_minimal_jre(jdk_root, target_java)
                 break
 
         if not found:
@@ -264,12 +270,12 @@ class PortableBuilder:
         print()
         print("="*60)
         if self.missing:
-            print(f"[⚠] 缺少工具: {', '.join(self.missing)}")
-            print("    请手动补充后重新运行")
+            print(f"[!] Missing tools: {', '.join(self.missing)}")
+            print("    Please manually install and re-run")
             print("="*60)
             return False
         else:
-            print("[✓] 所有工具已收集完成！")
+            print("[OK] All tools collected!")
             print("="*60)
 
         print()
@@ -314,24 +320,24 @@ class PortableBuilder:
         if result.returncode == 0:
             print()
             print("="*60)
-            print("[✓] 打包成功！")
+            print("[OK] Build successful!")
             print("="*60)
             print()
-            print(f"输出位置:")
+            print(f"Output location:")
             print(f"  {self.project_dir / 'dist' / 'APK签名替换工具.exe'}")
             print()
-            print("使用说明:")
-            print("  1. 复制 dist/APK签名替换工具.exe 到任意位置")
-            print("  2. 双击运行，无需安装任何依赖")
-            print("  3. 所有工具已内置")
+            print("Instructions:")
+            print("  1. Copy dist/APK签名替换工具.exe to any location")
+            print("  2. Double-click to run, no installation needed")
+            print("  3. All tools are built-in")
             print()
-            print("⚠️ 注意:")
-            print("  - 单文件 EXE 首次启动较慢（需解压内置工具）")
-            print("  - 工作目录自动生成在用户目录下")
+            print("NOTE:")
+            print("  - Single-file EXE starts slower first time (needs to unpack built-in tools)")
+            print("  - Working directory is auto-generated under user directory")
             return True
         else:
             print()
-            print("[✗] 打包失败")
+            print("[X] Build failed")
             return False
 
 

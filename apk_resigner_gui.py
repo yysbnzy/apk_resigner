@@ -173,8 +173,8 @@ class APKResignerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("APK 签名替换工具 - 便携版")
-        self.root.geometry("900x700")
-        self.root.minsize(800, 600)
+        self.root.geometry("900x1050")
+        self.root.minsize(800, 800)
 
         self.work_dir = Path(os.path.expanduser("~")) / "apk_resign_work"
         self.work_dir.mkdir(exist_ok=True)
@@ -299,7 +299,7 @@ class APKResignerGUI:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=20, font=("Consolas", 10))
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=12, font=("Consolas", 10))
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         self.log_text.tag_config("INFO", foreground="blue")
@@ -350,6 +350,7 @@ class APKResignerGUI:
         """构建设备连接标签页"""
         parent.columnconfigure(0, weight=1)
         parent.columnconfigure(1, weight=2)
+        parent.rowconfigure(0, weight=1)
         parent.rowconfigure(1, weight=1)
 
         # 左侧：设备列表
@@ -401,6 +402,7 @@ class APKResignerGUI:
     def _build_app_tab(self, parent):
         """构建应用列表标签页"""
         parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
         parent.rowconfigure(2, weight=1)
 
         # 顶部控制栏
@@ -452,6 +454,7 @@ class APKResignerGUI:
     def _build_backup_tab(self, parent):
         """构建备份还原标签页"""
         parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
         parent.rowconfigure(2, weight=1)
 
         # 顶部选择
@@ -503,11 +506,22 @@ class APKResignerGUI:
         ttk.Button(parent, text="🧹 清空", command=self._clear_adb_log, width=10).grid(row=1, column=0, sticky=tk.E, pady=5)
 
     def _adb_log(self, message, level="INFO"):
-        """ADB 专用日志输出"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.adb_log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
-        self.adb_log_text.see(tk.END)
-        self.root.update_idletasks()
+        """ADB 专用日志输出（线程安全）"""
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            # 使用 after 确保在主线程中更新 UI
+            self.root.after(0, lambda: self._do_adb_log(timestamp, message, level))
+        except Exception:
+            pass
+
+    def _do_adb_log(self, timestamp, message, level):
+        """实际执行 ADB 日志插入（必须在主线程调用）"""
+        try:
+            if hasattr(self, 'adb_log_text') and self.adb_log_text:
+                self.adb_log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
+                self.adb_log_text.see(tk.END)
+        except Exception:
+            pass
         # 同时输出到主日志
         self.log(f"[ADB] {message}", level)
 
@@ -744,7 +758,7 @@ class APKResignerGUI:
             
         except Exception as e:
             self._adb_log(f"一键处理失败: {e}", "ERROR")
-            self.root.after(0, lambda: messagebox.showerror("错误", f"一键处理失败: {e}"))
+            self.root.after(0, lambda: self._show_error_dialog("错误", f"一键处理失败: {e}"))
 
     def _run_sign_and_install(self, base_apk, package_name):
         """在主线程执行签名和安装"""
@@ -771,7 +785,7 @@ class APKResignerGUI:
             
         except Exception as e:
             self._adb_log(f"签名失败: {e}", "ERROR")
-            messagebox.showerror("错误", f"签名失败: {e}")
+            self._show_error_dialog("错误", f"签名失败: {e}")
 
     def _show_install_dialog(self, apk_path, package_name):
         """显示安装方式选择对话框"""
@@ -1044,10 +1058,41 @@ class APKResignerGUI:
             self.log(f"已选择密钥库: {path}", "INFO")
 
     def log(self, message, level="INFO"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
-        self.log_text.see(tk.END)
-        self.root.update_idletasks()
+        """输出日志到主日志区域（线程安全）"""
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            # 使用 after 确保在主线程中更新 UI
+            self.root.after(0, lambda: self._do_log(timestamp, message, level))
+        except Exception:
+            pass  # 忽略日志错误，避免递归崩溃
+
+    def _do_log(self, timestamp, message, level):
+        """实际执行日志插入（必须在主线程调用）"""
+        try:
+            self.log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
+            self.log_text.see(tk.END)
+        except Exception:
+            pass
+
+    def _show_error_dialog(self, title, message):
+        """显示错误对话框（带防重复机制）"""
+        if self._error_dialog_open:
+            return
+        self._error_dialog_open = True
+        try:
+            messagebox.showerror(title, message)
+        finally:
+            self._error_dialog_open = False
+
+    def _show_info_dialog(self, title, message):
+        """显示信息对话框（带防重复机制）"""
+        if self._error_dialog_open:
+            return
+        self._error_dialog_open = True
+        try:
+            messagebox.showinfo(title, message)
+        finally:
+            self._error_dialog_open = False
 
     def set_buttons_state(self, state):
         self.btn_setup.config(state=state)
@@ -1103,7 +1148,7 @@ class APKResignerGUI:
         self.log(f"📋 签名方案: {scheme}", "INFO")
         self.log(f"🔑 密钥库: {keystore}", "INFO")
         self._compare_signatures(apk, final)
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"一键重签名完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
+        self.root.after(0, lambda: self._show_info_dialog("完成", f"一键重签名完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
 
     def _task_done(self):
         self.progress.stop()
@@ -1158,7 +1203,7 @@ class APKResignerGUI:
         self.log(f"🔑 密钥库: {keystore}", "INFO")
         self._log_signature_details(final, scheme)
         self._compare_signatures(apk, final)
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
+        self.root.after(0, lambda: self._show_info_dialog("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
 
     def _generate_keystore(self, path):
         self.log(f"[+] 生成测试密钥库: {path.name}")
