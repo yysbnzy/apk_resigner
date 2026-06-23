@@ -311,7 +311,6 @@ class APKResignerGUI:
         else:
             # ADB不可用时的提示
             ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=7, column=0, columnspan=3, pady=10)
-            self._build_adb_notebook(main_frame)
 
     def _build_adb_notebook(self, main_frame, row=8):
         """构建 ADB 相关 Notebook 标签页"""
