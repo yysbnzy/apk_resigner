@@ -294,24 +294,14 @@ class APKResignerGUI:
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
         self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        log_frame = ttk.LabelFrame(main_frame, text="执行日志", padding="5")
-        log_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=12, font=("Consolas", 10))
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        self.log_text.tag_config("INFO", foreground="blue")
-        self.log_text.tag_config("SUCCESS", foreground="green")
-        self.log_text.tag_config("ERROR", foreground="red")
-        self.log_text.tag_config("WARNING", foreground="orange")
-
+        # 状态栏
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
-        status_bar.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        status_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        main_frame.rowconfigure(6, weight=1)
+        # 删除执行日志区域，所有日志统一显示在 ADB 日志标签页中
+        # 调整 Notebook 行获得更多空间
+        main_frame.rowconfigure(5, weight=1)
 
         # ────────────────────────────────────────
         # 新增 ADB Notebook 标签页
@@ -1058,19 +1048,20 @@ class APKResignerGUI:
             self.log(f"已选择密钥库: {path}", "INFO")
 
     def log(self, message, level="INFO"):
-        """输出日志到主日志区域（线程安全）"""
+        """输出日志到 ADB 日志区域（线程安全，如果 ADB 日志不可用则输出到控制台）"""
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            # 使用 after 确保在主线程中更新 UI
-            self.root.after(0, lambda: self._do_log(timestamp, message, level))
+            # 优先写入 ADB 日志
+            self.root.after(0, lambda: self._do_log_to_adb(timestamp, message, level))
         except Exception:
-            pass  # 忽略日志错误，避免递归崩溃
+            print(f"[{level}] {message}")
 
-    def _do_log(self, timestamp, message, level):
-        """实际执行日志插入（必须在主线程调用）"""
+    def _do_log_to_adb(self, timestamp, message, level):
+        """将日志写入 ADB 日志区域"""
         try:
-            self.log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
-            self.log_text.see(tk.END)
+            if hasattr(self, 'adb_log_text') and self.adb_log_text:
+                self.adb_log_text.insert(tk.END, f"[{timestamp}] [{level}] {message}\n", level)
+                self.adb_log_text.see(tk.END)
         except Exception:
             pass
 

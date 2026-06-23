@@ -416,7 +416,7 @@ class ADBManager:
         
         # 解析权限
         perms = re.findall(r'android\.permission\.[\w.]+', output)
-        details['permissions'] = ', '.join(set(perms)[:10])  # 最多10个
+        details['permissions'] = ', '.join(list(set(perms))[:10])  # 最多10个
         
         return details
     
