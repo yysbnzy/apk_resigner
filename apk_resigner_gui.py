@@ -300,21 +300,25 @@ class APKResignerGUI:
         status_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
         # 删除执行日志区域，所有日志统一显示在 ADB 日志标签页中
-        # 调整 Notebook 行获得更多空间
-        main_frame.rowconfigure(5, weight=1)
+        # Notebook 放在 row=7，与状态栏相邻，分配剩余空间
+        main_frame.rowconfigure(7, weight=1)
 
         # ────────────────────────────────────────
         # 新增 ADB Notebook 标签页
         # ────────────────────────────────────────
         if ADB_AVAILABLE:
+            self._build_adb_notebook(main_frame, 7)
+        else:
+            # ADB不可用时的提示
+            ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=7, column=0, columnspan=3, pady=10)
             self._build_adb_notebook(main_frame)
 
-    def _build_adb_notebook(self, main_frame):
+    def _build_adb_notebook(self, main_frame, row=8):
         """构建 ADB 相关 Notebook 标签页"""
         # Notebook 容器
         notebook = ttk.Notebook(main_frame)
-        notebook.grid(row=8, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
-        main_frame.rowconfigure(8, weight=2)
+        notebook.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        main_frame.rowconfigure(row, weight=1)
 
         # Tab 1: 设备连接
         device_tab = ttk.Frame(notebook, padding="10")
