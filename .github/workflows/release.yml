@@ -67,6 +67,13 @@ jobs:
             exit $BUILD_EXIT
           fi
 
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+
       - name: Rename output
         run: |
           $version = "${{ github.event.inputs.version || github.ref_name }}"
