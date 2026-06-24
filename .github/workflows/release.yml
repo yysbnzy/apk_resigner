@@ -41,6 +41,7 @@ jobs:
           pip install pyinstaller cryptography
 
       - name: Build portable EXE
+        shell: cmd
         run: python build_portable.py
 
       - name: Rename output
