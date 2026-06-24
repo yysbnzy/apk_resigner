@@ -148,15 +148,16 @@ class PortableBuilder:
         """从本地 JDK 收集完整运行环境"""
         self.log("查找 JDK...")
 
-        # 常见 JDK 路径
+        # 常见 JDK 路径（过滤空路径）
         search_paths = [
-            Path(os.environ.get("JAVA_HOME", "")),
+            Path(os.environ.get("JAVA_HOME", "")) if os.environ.get("JAVA_HOME") else None,
             Path("C:/Program Files/Java"),
             Path("C:/Program Files/Eclipse Adoptium"),
             Path.home() / ".sdkman" / "candidates" / "java" / "current",
             Path("/usr/lib/jvm"),
             Path("/Library/Java/JavaVirtualMachines"),
         ]
+        search_paths = [p for p in search_paths if p is not None]
 
         found = False
         for base in search_paths:
@@ -275,11 +276,17 @@ class PortableBuilder:
                 "modules",           # JRE核心模块（最大但必需）
                 "jvm.cfg",           # JVM配置
                 "classlist",         # 类列表
+                # 时区数据库（keytool等工具需要）
+                "tzdb.dat",
+                "tzmappings",
                 # 安全相关
                 "security/cacerts",
                 "security/java.security",
                 "security/blocked.certs",
                 "security/public_suffix_list.dat",
+                # 加密策略（keytool生成密钥必需）
+                "security/policy/unlimited/default_local.policy",
+                "security/policy/unlimited/default_US_export.policy",
             ]
             
             for rel_path in required_lib_files:
@@ -296,6 +303,13 @@ class PortableBuilder:
                 src = src_lib / font_file
                 if src.exists():
                     shutil.copy2(src, dst_lib / font_file)
+
+            # 加密策略目录（keytool生成密钥必需）
+            policy_src = src_lib / "security" / "policy"
+            if policy_src.exists():
+                policy_dst = dst_lib / "security" / "policy"
+                shutil.copytree(policy_src, policy_dst, dirs_exist_ok=True)
+                self.success(f"  复制: lib/security/policy/")
 
         # === conf/ 目录：只保留网络和安全配置 ===
         src_conf = jdk_root / "conf"
@@ -326,6 +340,13 @@ class PortableBuilder:
                 dst_security.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_security, dst_security)
                 self.success(f"  复制: conf/security/java.security")
+            
+            # 加密策略目录（keytool生成密钥必需）
+            policy_src = src_conf / "security" / "policy"
+            if policy_src.exists():
+                policy_dst = dst_conf / "security" / "policy"
+                shutil.copytree(policy_src, policy_dst, dirs_exist_ok=True)
+                self.success(f"  复制: conf/security/policy/")
 
         # === bin/ 目录：只复制必需文件（已在collect_jdk中处理）===
         self.log("  bin/ 已精简复制")
