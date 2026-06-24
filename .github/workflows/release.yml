@@ -33,21 +33,28 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Debug environment
+      - name: Pre-build diagnostics
         shell: pwsh
         run: |
-          Write-Host "=== Python Version ==="
-          python --version
-          Write-Host "=== Python Path ==="
-          Get-Command python | Select-Object Source
-          Write-Host "=== Java Version ==="
-          java -version
-          Write-Host "=== JAVA_HOME ==="
-          $env:JAVA_HOME
-          Write-Host "=== Directory Structure ==="
-          Get-ChildItem -Recurse -Depth 2 | Select-Object FullName
-          Write-Host "=== Check tkinter ==="
-          python -c "import tkinter; print(tkinter.TkVersion)"
+          Write-Host "=== Environment Diagnostics ==="
+          Write-Host "JAVA_HOME: $env:JAVA_HOME"
+          Write-Host "Python: $(python --version)"
+          Write-Host "Java: $(java -version 2>&1 | Select-Object -First 1)"
+          
+          # Check if JAVA_HOME is set
+          if (-not $env:JAVA_HOME) {
+            Write-Error "JAVA_HOME is not set!"
+            exit 1
+          }
+          
+          # Check JDK structure
+          $jdkBin = Join-Path $env:JAVA_HOME "bin"
+          Write-Host "JDK bin path: $jdkBin"
+          Write-Host "keytool exists: $(Test-Path (Join-Path $jdkBin 'keytool.exe'))"
+          Write-Host "java exists: $(Test-Path (Join-Path $jdkBin 'java.exe'))"
+          
+          # Check tkinter
+          python -c "import tkinter; print('tkinter OK')"
 
       - name: Install dependencies
         run: |
@@ -57,14 +64,18 @@ jobs:
       - name: Build portable EXE
         shell: pwsh
         run: |
+          # Run build_portable.py with full output
           $env:PYTHONUNBUFFERED = "1"
           python build_portable.py 2>&1 | Tee-Object -FilePath build.log
           $exitCode = $LASTEXITCODE
+          
+          # Always show log content
+          Write-Host ""
+          Write-Host "=== FULL BUILD LOG ==="
+          Get-Content build.log -ErrorAction SilentlyContinue
+          
           if ($exitCode -ne 0) {
-            Write-Host "=== BUILD FAILED ==="
-            Write-Host "Exit code: $exitCode"
-            Write-Host "=== LAST 100 LINES OF LOG ==="
-            Get-Content build.log -Tail 100
+            Write-Error "Build failed with exit code $exitCode"
             exit $exitCode
           }
 
@@ -83,10 +94,10 @@ jobs:
             $size = (Get-Item $exe).Length / 1MB
             Write-Host "EXE created: $([math]::Round($size, 2)) MB"
             if ($size -lt 50) {
-              Write-Host "WARNING: EXE size is suspiciously small, JDK may not be included"
+              Write-Warning "EXE size is suspiciously small, JDK may not be included"
             }
           } else {
-            Write-Host "ERROR: EXE not found"
+            Write-Error "EXE not found"
             exit 1
           }
 
