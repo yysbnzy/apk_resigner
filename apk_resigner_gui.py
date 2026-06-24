@@ -757,6 +757,9 @@ class APKResignerGUI:
             backup_result = self.backup_manager.create_backup_from_export(export_result, device_info)
             if backup_result.success:
                 self._adb_log(f"  ✓ 备份完成: {backup_result.backup_dir}", "SUCCESS")
+            else:
+                self._adb_log(f"  ⚠️ 备份失败: {backup_result.message}", "WARNING")
+                # 继续执行签名，不阻塞流程
             
             # 3. 签名（复用现有方法）
             self._adb_log(f"[3/5] 执行签名...")

@@ -17,6 +17,7 @@ BackupManager — 备份/还原管理器
 
 import json
 import shutil
+import zipfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Union
@@ -117,6 +118,81 @@ class BackupManager:
         
         self.backup_root.mkdir(parents=True, exist_ok=True)
     
+    def _validate_apk_file(self, apk_path: Union[str, Path]) -> tuple[bool, str]:
+        """
+        验证 APK 文件是否有效
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        apk_path = Path(apk_path)
+        
+        # 1. 检查文件是否存在
+        if not apk_path.exists():
+            return False, f"文件不存在: {apk_path}"
+        
+        # 2. 检查文件大小
+        size = apk_path.stat().st_size
+        if size == 0:
+            return False, f"文件大小为0: {apk_path}"
+        
+        # 3. 检查是否为有效的 ZIP 文件（APK 本质是 ZIP）
+        try:
+            with zipfile.ZipFile(apk_path, 'r') as zf:
+                # 检查是否包含 AndroidManifest.xml
+                namelist = zf.namelist()
+                if 'AndroidManifest.xml' not in namelist:
+                    return False, f"缺少 AndroidManifest.xml: {apk_path}"
+                
+                # 检查是否包含 classes.dex
+                has_dex = any(name.endswith('.dex') for name in namelist)
+                if not has_dex:
+                    return False, f"缺少 classes.dex: {apk_path}"
+        except zipfile.BadZipFile:
+            return False, f"不是有效的 ZIP/APK 文件: {apk_path}"
+        except Exception as e:
+            return False, f"验证失败: {apk_path} - {str(e)}"
+        
+        return True, ""
+    
+    def _validate_backup_files(self, backup_dir: Union[str, Path]) -> tuple[bool, str]:
+        """
+        验证备份目录中的文件是否完整有效
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        backup_dir = Path(backup_dir)
+        
+        # 1. 检查 manifest.json
+        manifest_path = backup_dir / "manifest.json"
+        if not manifest_path.exists():
+            return False, f"manifest.json 不存在: {backup_dir}"
+        
+        # 2. 读取 manifest
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+        except Exception as e:
+            return False, f"manifest.json 读取失败: {str(e)}"
+        
+        # 3. 检查 base.apk
+        base_apk_name = manifest.get('base_apk', 'base.apk')
+        base_apk_path = backup_dir / base_apk_name
+        
+        is_valid, error = self._validate_apk_file(base_apk_path)
+        if not is_valid:
+            return False, f"base.apk 验证失败: {error}"
+        
+        # 4. 检查 split APKs
+        for split_name in manifest.get('splits', []):
+            split_path = backup_dir / split_name
+            is_valid, error = self._validate_apk_file(split_path)
+            if not is_valid:
+                return False, f"split APK 验证失败 [{split_name}]: {error}"
+        
+        return True, ""
+    
     # ═══════════════════════════════════════════════════
     # 创建备份
     # ═══════════════════════════════════════════════════
@@ -148,30 +224,50 @@ class BackupManager:
             BackupResult: 备份结果
         """
         try:
-            # 1. 创建备份目录
+            # 1. 验证源文件
+            base_src = Path(apk_paths.get('base', ''))
+            if not base_src:
+                return BackupResult(False, "", "未提供 base APK 路径")
+            
+            is_valid, error = self._validate_apk_file(base_src)
+            if not is_valid:
+                return BackupResult(False, "", f"源 APK 验证失败: {error}")
+            
+            # 2. 创建备份目录
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_dir = self.backup_root / f"{package_name}_{timestamp}"
             backup_dir.mkdir(parents=True, exist_ok=True)
             
-            # 2. 复制 APK 文件
-            base_src = Path(apk_paths.get('base', ''))
-            if not base_src or not base_src.exists():
-                return BackupResult(False, "", "未找到 base APK")
-            
+            # 3. 复制 base APK
             base_dst = backup_dir / "base.apk"
             shutil.copy2(base_src, base_dst)
+            
+            # 验证复制后的文件
+            is_valid, error = self._validate_apk_file(base_dst)
+            if not is_valid:
+                # 清理并返回错误
+                shutil.rmtree(backup_dir, ignore_errors=True)
+                return BackupResult(False, "", f"复制后 APK 验证失败: {error}")
+            
             total_size = base_dst.stat().st_size
             
+            # 4. 复制 split APKs
             splits = []
             for split_src in apk_paths.get('splits', []):
                 split_src = Path(split_src)
                 if split_src.exists():
+                    # 验证 split APK
+                    is_valid, error = self._validate_apk_file(split_src)
+                    if not is_valid:
+                        self.warn(f"Split APK 验证失败，跳过: {split_src} - {error}")
+                        continue
+                    
                     split_dst = backup_dir / split_src.name
                     shutil.copy2(split_src, split_dst)
                     splits.append(split_dst.name)
                     total_size += split_dst.stat().st_size
             
-            # 3. 创建 manifest.json
+            # 5. 创建 manifest.json
             manifest = {
                 "package": package_name,
                 "timestamp": timestamp,
@@ -383,6 +479,17 @@ class BackupManager:
             RestoreResult
         """
         try:
+            backup_dir = Path(backup_dir)
+            
+            # 1. 验证备份目录和文件
+            is_valid, error = self._validate_backup_files(backup_dir)
+            if not is_valid:
+                return RestoreResult(
+                    success=False,
+                    message=f"备份验证失败: {error}"
+                )
+            
+            # 2. 获取备份信息
             backup = self.get_backup(backup_dir)
             if not backup:
                 return RestoreResult(
@@ -390,28 +497,41 @@ class BackupManager:
                     message="备份不存在或已损坏"
                 )
             
-            # 检查文件存在
+            # 3. 验证 base APK 文件
             base_apk = Path(backup.base_apk)
-            if not base_apk.exists():
+            is_valid, error = self._validate_apk_file(base_apk)
+            if not is_valid:
                 return RestoreResult(
                     success=False,
-                    message=f"base.apk 不存在: {base_apk}"
+                    message=f"base.apk 验证失败: {error}"
                 )
             
-            # 如果没有 install_manager，仅返回准备信息
+            # 4. 如果没有 install_manager，仅返回准备信息
             if not install_manager:
-                splits = [s for s in backup.splits if Path(s).exists()]
+                valid_splits = []
+                for split in backup.splits:
+                    is_valid, _ = self._validate_apk_file(split)
+                    if is_valid:
+                        valid_splits.append(split)
                 return RestoreResult(
                     success=True,
                     message=f"准备就绪: {backup.package_name} v{backup.version_name}",
-                    install_output=f"base={base_apk}, splits={splits}"
+                    install_output=f"base={base_apk}, splits={valid_splits}"
                 )
             
-            # 使用 InstallManager 安装
-            splits = [s for s in backup.splits if Path(s).exists()]
+            # 5. 过滤有效的 split APKs
+            valid_splits = []
+            for split in backup.splits:
+                is_valid, error = self._validate_apk_file(split)
+                if is_valid:
+                    valid_splits.append(split)
+                else:
+                    self.warn(f"Split APK 验证失败，跳过: {split} - {error}")
+            
+            # 6. 使用 InstallManager 安装
             result = install_manager.install_overwrite(
                 str(base_apk),
-                splits if splits else None
+                valid_splits if valid_splits else None
             )
             
             return RestoreResult(
