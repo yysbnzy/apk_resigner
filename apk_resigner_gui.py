@@ -416,12 +416,71 @@ class APKResignerGUI:
         self._full_process(apk)
     
     def _local_quick_sign(self):
-        """本地快速签名替换"""
+        """本地快速签名替换（后台线程执行）"""
         apk = self.local_apk_var.get()
         if not apk:
             messagebox.showwarning("提示", "请先选择 APK 文件")
             return
-        self._quick_sign_replace(apk)
+        
+        # 在后台线程执行，避免阻塞UI
+        thread = threading.Thread(target=self._quick_sign_replace, args=(apk,))
+        thread.daemon = True
+        thread.start()
+    
+    def _quick_sign_replace(self, apk_path):
+        """快速签名替换（不解包，直接去除原签名+重新签名）"""
+        try:
+            self.status_var.set("正在快速签名替换...")
+            self.progress.start()
+            self.log("[+] 快速签名替换（不解包）", "INFO")
+            
+            apk_path = Path(apk_path)
+            if not apk_path.exists():
+                self._show_error_dialog("错误", f"APK文件不存在: {apk_path}")
+                return
+            
+            # 使用 QuickSignReplacer 执行快速签名替换
+            from quick_sign_replace import QuickSignReplacer
+            
+            # 创建工作目录
+            work_dir = self.work_dir / "quick_sign"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            
+            replacer = QuickSignReplacer(work_dir)
+            
+            # 获取签名方案
+            scheme = self.local_scheme_var.get() if hasattr(self, 'local_scheme_var') else "v2+v3+v4"
+            v1_only = (scheme == "v1")
+            
+            # 执行快速签名替换
+            final_apk = replacer.quick_replace(
+                original_apk=apk_path,
+                keystore_path=self.keystore_path.get() if self.keystore_path.get() else None,
+                v1_only=v1_only
+            )
+            
+            if final_apk and Path(final_apk).exists():
+                self.log(f"[✓] 快速签名替换完成: {final_apk}", "SUCCESS")
+                self.status_var.set(f"快速签名替换完成: {Path(final_apk).name}")
+                
+                # 显示结果对话框
+                self._show_info_dialog(
+                    "完成",
+                    f"快速签名替换完成！\n\n"
+                    f"原始APK: {apk_path.name}\n"
+                    f"新签名APK: {Path(final_apk).name}\n\n"
+                    f"文件位置: {final_apk}"
+                )
+            else:
+                self.log("[✗] 快速签名替换失败", "ERROR")
+                self._show_error_dialog("错误", "快速签名替换失败，请检查日志")
+                
+        except Exception as e:
+            self.log(f"[✗] 快速签名替换异常: {e}", "ERROR")
+            self._show_error_dialog("错误", f"快速签名替换失败: {e}")
+        finally:
+            self.progress.stop()
+            self.status_var.set("就绪")
     
     def _verify_apk_signature(self):
         """验证APK签名"""
