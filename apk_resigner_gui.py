@@ -314,6 +314,126 @@ class APKResignerGUI:
         log_tab = ttk.Frame(notebook, padding="10")
         notebook.add(log_tab, text="📝 ADB日志")
         self._build_adb_log_tab(log_tab)
+        
+        # Tab 5: 配置模块（本地签名）
+        config_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(config_tab, text="⚙️ 配置")
+        self._build_config_tab(config_tab)
+
+    def _build_config_tab(self, parent):
+        """构建配置模块标签页（本地APK签名）"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        
+        # 主容器
+        main_container = ttk.Frame(parent)
+        main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_container.columnconfigure(0, weight=1)
+        
+        # ── 本地APK签名 ──
+        local_frame = ttk.LabelFrame(main_container, text="本地 APK 签名", padding="10")
+        local_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        local_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(local_frame, text="APK 文件:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.local_apk_var = tk.StringVar()
+        ttk.Entry(local_frame, textvariable=self.local_apk_var).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        ttk.Button(local_frame, text="浏览...", command=self._browse_local_apk).grid(row=0, column=2, padx=5, pady=5)
+        
+        ttk.Label(local_frame, text="签名方案:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.local_scheme_var = tk.StringVar(value="v2+v3+v4")
+        scheme_combo = ttk.Combobox(local_frame, textvariable=self.local_scheme_var, 
+                                    values=["v1", "v2", "v2+v3", "v2+v3+v4", "v4"], 
+                                    state="readonly", width=15)
+        scheme_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(local_frame, text="密钥库:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.local_keystore_var = tk.StringVar()
+        ttk.Entry(local_frame, textvariable=self.local_keystore_var, state="readonly").grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        ttk.Button(local_frame, text="浏览...", command=self._browse_local_keystore).grid(row=2, column=2, padx=5, pady=5)
+        
+        ttk.Checkbutton(local_frame, text="自动生成测试密钥", variable=self.auto_generate_key).grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        
+        # 签名按钮
+        btn_frame = ttk.Frame(local_frame)
+        btn_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        
+        ttk.Button(btn_frame, text="🔧 修改内容+签名", 
+                   command=lambda: self._local_full_process(), 
+                   width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="⚡ 快速签名替换", 
+                   command=lambda: self._local_quick_sign(), 
+                   width=20).pack(side=tk.LEFT, padx=5)
+        
+        # ── 签名工具 ──
+        tools_frame = ttk.LabelFrame(main_container, text="签名工具", padding="10")
+        tools_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(tools_frame, text="🔍 验证签名", 
+                   command=self._verify_apk_signature, 
+                   width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(tools_frame, text="📊 签名对比", 
+                   command=self._compare_signatures, 
+                   width=15).pack(side=tk.LEFT, padx=5)
+        
+        # ── 说明 ──
+        help_frame = ttk.LabelFrame(main_container, text="说明", padding="10")
+        help_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        help_text = """本地签名功能：不连接ADB设备时，可以选择本地APK文件进行重签名。
+• 修改内容+签名：反编译APK，修改内容后重新打包并签名
+• 快速签名替换：不解包，直接去除原签名并重新签名
+• 支持 V1/V2/V3/V4 签名方案"""
+        ttk.Label(help_frame, text=help_text, justify=tk.LEFT, wraplength=500).pack(anchor=tk.W)
+    
+    def _browse_local_apk(self):
+        """浏览本地APK文件"""
+        path = filedialog.askopenfilename(
+            title="选择 APK 文件",
+            filetypes=[("APK 文件", "*.apk"), ("所有文件", "*.*")]
+        )
+        if path:
+            self.local_apk_var.set(path)
+            self.apk_path.set(path)
+            self.detect_apk_scheme(path)
+    
+    def _browse_local_keystore(self):
+        """浏览密钥库文件"""
+        path = filedialog.askopenfilename(
+            title="选择密钥库",
+            filetypes=[("JKS/Keystore", "*.jks *.keystore"), ("所有文件", "*.*")]
+        )
+        if path:
+            self.local_keystore_var.set(path)
+            self.keystore_path.set(path)
+    
+    def _local_full_process(self):
+        """本地完整处理（修改内容+签名）"""
+        apk = self.local_apk_var.get()
+        if not apk:
+            messagebox.showwarning("提示", "请先选择 APK 文件")
+            return
+        self._full_process(apk)
+    
+    def _local_quick_sign(self):
+        """本地快速签名替换"""
+        apk = self.local_apk_var.get()
+        if not apk:
+            messagebox.showwarning("提示", "请先选择 APK 文件")
+            return
+        self._quick_sign_replace(apk)
+    
+    def _verify_apk_signature(self):
+        """验证APK签名"""
+        apk = self.local_apk_var.get()
+        if not apk:
+            messagebox.showwarning("提示", "请先选择 APK 文件")
+            return
+        self._verify_signature(apk)
+    
+    def _compare_signatures(self):
+        """对比签名"""
+        messagebox.showinfo("签名对比", "请选择两个APK文件进行对比")
 
     def _build_device_tab(self, parent):
         """构建设备连接标签页"""
@@ -457,6 +577,9 @@ class APKResignerGUI:
         ttk.Button(btn_frame, text="♻️ 还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="🗑️ 删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="🧹 清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
+        
+        # 自动刷新备份列表
+        self.root.after(100, self._refresh_backups)
 
     def _build_adb_log_tab(self, parent):
         """构建 ADB 操作日志标签页"""
@@ -939,11 +1062,13 @@ class APKResignerGUI:
                 ))
             else:
                 self._adb_log(f"还原失败: {result.message}", "ERROR")
-                # 打印原始安装输出到日志，便于调试
+                # 打印原始安装输出到日志，便于调试和取证
                 if result.install_output:
+                    self._adb_log("=== ADB 原始输出 ===", "ERROR")
                     raw_lines = result.install_output.strip().split('\n')
-                    for line in raw_lines[:10]:
-                        self._adb_log(f"    > {line}", "ERROR")
+                    for line in raw_lines:
+                        self._adb_log(f"  {line}", "ERROR")
+                    self._adb_log("=== 原始输出结束 ===", "ERROR")
                 self.root.after(0, lambda: messagebox.showerror(
                     "还原失败",
                     f"应用 {package_name} 还原失败\n\n{result.message}"
