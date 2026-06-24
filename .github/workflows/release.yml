@@ -55,8 +55,10 @@ jobs:
           pip install pyinstaller cryptography
 
       - name: Build portable EXE
-        shell: cmd
-        run: python build_portable.py
+        shell: bash
+        run: |
+          python build_portable.py 2>&1
+          exit ${PIPESTATUS[0]}
 
       - name: Rename output
         run: |
