@@ -29,6 +29,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
