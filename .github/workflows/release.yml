@@ -62,22 +62,17 @@ jobs:
           pip install pyinstaller cryptography
 
       - name: Build portable EXE
-        shell: pwsh
+        shell: cmd
         run: |
-          # Run build_portable.py with full output
-          $env:PYTHONUNBUFFERED = "1"
-          python build_portable.py 2>&1 | Tee-Object -FilePath build.log
-          $exitCode = $LASTEXITCODE
-          
-          # Always show log content
-          Write-Host ""
-          Write-Host "=== FULL BUILD LOG ==="
-          Get-Content build.log -ErrorAction SilentlyContinue
-          
-          if ($exitCode -ne 0) {
-            Write-Error "Build failed with exit code $exitCode"
-            exit $exitCode
-          }
+          set PYTHONUNBUFFERED=1
+          python -u build_portable.py > build.log 2>&1
+          set EXITCODE=%ERRORLEVEL%
+          type build.log
+          if %EXITCODE% neq 0 (
+            echo === BUILD FAILED ===
+            echo Exit code: %EXITCODE%
+            exit /b %EXITCODE%
+          )
 
       - name: Upload build log
         if: always()
