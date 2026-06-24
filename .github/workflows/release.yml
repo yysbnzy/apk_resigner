@@ -35,6 +35,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Debug environment
+        shell: cmd
+        run: |
+          echo "=== Python Version ==="
+          python --version
+          echo "=== Python Path ==="
+          where python
+          echo "=== Java Version ==="
+          java -version
+          echo "=== Directory Structure ==="
+          dir /s /b
+          echo "=== Check tkinter ==="
+          python -c "import tkinter; print(tkinter.Tcl().eval('info patchlevel'))"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
