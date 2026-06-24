@@ -172,7 +172,7 @@ class ToolManager:
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 - 便携版")
+        self.root.title("APK 签名替换工具 v2.2.0")
         self.root.geometry("900x1050")
         self.root.minsize(800, 800)
 
@@ -217,7 +217,6 @@ class APKResignerGUI:
             self.log("纯 Python 模式已启用：V1-only 签名可用，无需 JDK/Android SDK", "INFO")
             self.pure_python_mode = True
             self.status_var.set(f"纯 Python 模式 (缺少: {', '.join(missing)})")
-            self.btn_setup.config(state="disabled")
         else:
             self.status_var.set("就绪 (全部内置)")
 
@@ -242,7 +241,7 @@ class APKResignerGUI:
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 - 便携版", font=("Microsoft YaHei", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.2.0", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
         self.btn_help = ttk.Button(main_frame, text="❓ 使用说明", command=self.show_help, width=12)
@@ -268,49 +267,26 @@ class APKResignerGUI:
         self.scheme_label = ttk.Label(file_frame, text="检测到签名: 未选择APK", foreground="gray")
         self.scheme_label.grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
 
-        config_frame = ttk.LabelFrame(main_frame, text="签名参数", padding="10")
-        config_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-        config_frame.columnconfigure(1, weight=1)
-        config_frame.columnconfigure(3, weight=1)
-
-        ttk.Label(config_frame, text="密钥别名:").grid(row=0, column=0, sticky=tk.W, padx=5)
-        ttk.Entry(config_frame, textvariable=self.alias, width=20).grid(row=0, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(config_frame, text="密钥密码:").grid(row=0, column=2, sticky=tk.W, padx=5)
-        ttk.Entry(config_frame, textvariable=self.password, show="*", width=20).grid(row=0, column=3, sticky=tk.W, padx=5)
-
-        # 配置按钮
-        btn_frame = ttk.LabelFrame(main_frame, text="配置", padding="10")
-        btn_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-
-        self.btn_setup = ttk.Button(btn_frame, text="🔧 配置并执行", command=self.setup, width=24)
-        self.btn_setup.pack(side=tk.LEFT, padx=10)
-        self._tooltip(self.btn_setup, "解压APK→添加test.txt→重新打包→按原方案重新签名")
-
-        self.btn_verify = ttk.Button(btn_frame, text="🔍 验证签名", command=self.verify_apk, width=20)
-        self.btn_verify.pack(side=tk.LEFT, padx=10)
-        self._tooltip(self.btn_verify, "检查APK的签名状态和对齐情况")
-
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
-        self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.progress.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
         # 状态栏
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
-        status_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        status_bar.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
         # 删除执行日志区域，所有日志统一显示在 ADB 日志标签页中
-        # Notebook 放在 row=7，与状态栏相邻，分配剩余空间
-        main_frame.rowconfigure(7, weight=1)
+        # Notebook 放在 row=5，与状态栏相邻，分配剩余空间
+        main_frame.rowconfigure(5, weight=1)
 
         # ────────────────────────────────────────
         # 新增 ADB Notebook 标签页
         # ────────────────────────────────────────
         if ADB_AVAILABLE:
-            self._build_adb_notebook(main_frame, 7)
+            self._build_adb_notebook(main_frame, 5)
         else:
             # ADB不可用时的提示
-            ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=7, column=0, columnspan=3, pady=10)
+            ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=5, column=0, columnspan=3, pady=10)
 
     def _build_adb_notebook(self, main_frame, row=8):
         """构建 ADB 相关 Notebook 标签页"""
@@ -829,6 +805,11 @@ class APKResignerGUI:
                     "APK 被成功安装，可能存在签名验证绕过风险！"))
             else:
                 self._adb_log(f"  ✗ 安装失败: {result.message}", "ERROR")
+                # 打印原始 ADB 输出到日志，便于调试
+                if result.raw_output:
+                    raw_lines = result.raw_output.strip().split('\n')
+                    for line in raw_lines[:10]:  # 最多打印10行，避免刷屏
+                        self._adb_log(f"    > {line}", "ERROR")
                 self.root.after(0, lambda: messagebox.showerror("安装失败", result.message))
         
         except Exception as e:
@@ -913,6 +894,11 @@ class APKResignerGUI:
                 ))
             else:
                 self._adb_log(f"还原失败: {result.message}", "ERROR")
+                # 打印原始安装输出到日志，便于调试
+                if result.install_output:
+                    raw_lines = result.install_output.strip().split('\n')
+                    for line in raw_lines[:10]:
+                        self._adb_log(f"    > {line}", "ERROR")
                 self.root.after(0, lambda: messagebox.showerror(
                     "还原失败",
                     f"应用 {package_name} 还原失败\n\n{result.message}"
@@ -1088,67 +1074,6 @@ class APKResignerGUI:
         finally:
             self._error_dialog_open = False
 
-    def set_buttons_state(self, state):
-        self.btn_setup.config(state=state)
-        self.btn_verify.config(state=state)
-
-    def setup(self):
-        apk = self.apk_path.get()
-        if not apk or not Path(apk).exists():
-            messagebox.showerror("错误", "请选择有效的 APK 文件")
-            return
-        self.set_buttons_state("disabled")
-        self.progress.start()
-        self.status_var.set("执行中...")
-        thread = threading.Thread(target=self._do_setup, args=(apk,))
-        thread.daemon = True
-        thread.start()
-
-    def _do_setup(self, apk):
-        try:
-            self._full_process(apk)
-        except Exception as e:
-            self.log(f"❌ 执行出错: {str(e)}", "ERROR")
-        finally:
-            self.root.after(0, self._task_done)
-
-    def _quick_resign(self, apk):
-        self.log("="*50, "INFO")
-        self.log("⚡ 一键重签名流程", "INFO")
-        self.log("  保持原签名方案: " + self.detected_scheme.get(), "INFO")
-        self.log("="*50, "INFO")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        keystore = self._get_keystore()
-
-        stripped = self.work_dir / f"stripped_{timestamp}"
-        self._strip_signature(apk, stripped)
-
-        unsigned = self.work_dir / f"unsigned_{timestamp}.apk"
-        self._repack_zip(stripped, unsigned)
-
-        aligned = self.work_dir / f"aligned_{timestamp}.apk"
-        self._zipalign(unsigned, aligned)
-
-        scheme = self.detected_scheme.get()
-        self._sign_with_scheme(aligned, keystore, scheme)
-
-        # 输出到原 APK 同目录
-        apk_path = Path(apk)
-        final = apk_path.parent / f"{apk_path.stem}_resigned_{timestamp}.apk"
-        shutil.copy(aligned, final)
-
-        self.log(f"\n✅ 一键重签名完成！", "SUCCESS")
-        self.log(f"📦 最终 APK: {final}", "SUCCESS")
-        self.log(f"📋 签名方案: {scheme}", "INFO")
-        self.log(f"🔑 密钥库: {keystore}", "INFO")
-        self._compare_signatures(apk, final)
-        self.root.after(0, lambda: self._show_info_dialog("完成", f"一键重签名完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
-
-    def _task_done(self):
-        self.progress.stop()
-        self.set_buttons_state("normal")
-        self.status_var.set("就绪")
-
     def _get_keystore(self):
         if self.auto_generate_key.get():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1263,27 +1188,6 @@ class APKResignerGUI:
         else:
             raise RuntimeError(f"zipalign 失败: {result.stderr}")
 
-    def _strip_signature(self, apk, out_dir):
-        self.log(f"[+] 去除原签名...")
-        out_dir.mkdir(exist_ok=True)
-        with zipfile.ZipFile(apk, 'r') as zf:
-            for item in zf.namelist():
-                if item.startswith('META-INF/'):
-                    self.log(f"  - 移除: {item}")
-                    continue
-                zf.extract(item, out_dir)
-        self.log(f"  ✓ 签名已去除", "SUCCESS")
-
-    def _repack_zip(self, source_dir, output_apk):
-        self.log(f"[+] 重新打包 ZIP...")
-        with zipfile.ZipFile(output_apk, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(source_dir):
-                for file in files:
-                    file_path = Path(root) / file
-                    arcname = str(file_path.relative_to(source_dir))
-                    zf.write(file_path, arcname)
-        self.log(f"  ✓ 打包完成", "SUCCESS")
-
     def _sign_with_scheme(self, apk_path, keystore, scheme="v2+v3+v4"):
         self.log(f"[+] 签名 APK...")
         self.log(f"    签名方案: {scheme}", "INFO")
@@ -1352,43 +1256,19 @@ class APKResignerGUI:
             self.log(f"  {label}: {md5}", "INFO")
         self.log(f"\n⚠️ 签名已替换，完整性校验应当失败！", "WARNING")
 
-    def verify_apk(self):
-        apk = self.apk_path.get()
-        if not apk or not Path(apk).exists():
-            messagebox.showerror("错误", "请选择 APK 文件")
-            return
-        self.log(f"\n[+] 验证签名: {apk}", "INFO")
-        cmd = self.tools.get_cmd('apksigner')
-        if not cmd:
-            self.log("❌ apksigner 不可用", "ERROR")
-            return
-        cmd += ['verify', '-v', str(apk)]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            self.log(f"  ✓ 签名验证通过", "SUCCESS")
-            for line in result.stdout.strip().split('\n'):
-                self.log(f"    {line}", "INFO")
-        else:
-            self.log(f"  ✗ 验证失败: {result.stderr}", "ERROR")
-        cmd = self.tools.get_cmd('zipalign')
-        if cmd:
-            cmd += ['-c', '-v', '4', str(apk)]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                self.log(f"  ✓ zipalign 对齐正常", "SUCCESS")
-            else:
-                self.log(f"  ⚠ zipalign 可能有问题", "WARNING")
-
     def show_help(self):
         help_text = """APK 签名替换工具 - 使用说明
 
-🔧 修改内容+签名：解压 → 添加test.txt → 重打包 → 按原方案重新签名
-⚡ 一键重签名：不解包，去除原签名后按原方案重新签名
-🔍 验证签名：检查APK签名状态和对齐情况
+ADB 模块：
+📱 设备连接 - 连接安卓设备，查看设备信息
+📦 应用列表 - 扫描车机应用，一键导出+签名
+💾 备份还原 - 创建备份，随时还原
+📝 ADB日志 - 查看操作日志和签名结果
 
 测试方法：
-1. 选APK → 点击按钮 → 获取输出APK
-2. 在目标系统安装 → 预期：系统拒绝安装
+1. 连接设备 → 扫描应用 → 选择应用
+2. 一键处理：导出 → 备份 → 签名 → 安装测试
+3. 预期结果：系统拒绝安装（签名不匹配）
 
 签名方案：V1(5.0-6.0) / V2(7.0+) / V3(9.0+) / V4(11.0+)
 工具自动检测原方案并保持，无需手动选择。

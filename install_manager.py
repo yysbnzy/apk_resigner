@@ -280,12 +280,12 @@ class InstallManager:
         try:
             if splits and len(splits) > 0:
                 # Split APK 安装
-                result = self._install_multiple(apk_path, splits, reinstall=True)
+                # _install_multiple 已经返回 InstallResult，直接返回
+                return self._install_multiple(apk_path, splits, reinstall=True)
             else:
                 # 单 APK 安装
                 result = self._run_install(['install', '-r', '-d', '-t', str(apk_path)])
-            
-            return self._parse_result(result, 'overwrite', str(apk_path))
+                return self._parse_result(result, 'overwrite', str(apk_path))
         
         except Exception as e:
             return InstallResult(

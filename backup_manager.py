@@ -185,7 +185,7 @@ class BackupManager:
                 "splits": splits,
                 "total_size": total_size,
                 "backup_tool": "apk_resigner",
-                "backup_version": "2.0.0"
+                "backup_version": "2.0.2"
             }
             
             manifest_path = backup_dir / "manifest.json"
