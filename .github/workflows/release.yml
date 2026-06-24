@@ -65,13 +65,11 @@ jobs:
         shell: cmd
         run: |
           set PYTHONUNBUFFERED=1
-          python -u build_portable.py > build.log 2>&1
-          set EXITCODE=%ERRORLEVEL%
-          type build.log
-          if %EXITCODE% neq 0 (
+          python -u build_portable.py
+          if %ERRORLEVEL% neq 0 (
             echo === BUILD FAILED ===
-            echo Exit code: %EXITCODE%
-            exit /b %EXITCODE%
+            echo Exit code: %ERRORLEVEL%
+            exit /b %ERRORLEVEL%
           )
 
       - name: Upload build log
