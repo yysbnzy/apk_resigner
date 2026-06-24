@@ -503,7 +503,7 @@ class APKResignerGUI:
     # ────────────────────────────────────────
 
     def _refresh_devices(self):
-        """刷新设备列表"""
+        """刷新设备列表，如果无已连接设备则自动连接第一个可用设备"""
         if not self.adb_manager:
             self._adb_log("ADB 模块未加载", "ERROR")
             return
@@ -514,6 +514,9 @@ class APKResignerGUI:
         try:
             devices = self.adb_manager.list_devices()
             self._adb_log(f"发现 {len(devices)} 个设备")
+            
+            # 记录第一个可用设备，用于自动连接
+            first_ready_device = None
             
             for dev in devices:
                 state_text = {
@@ -528,6 +531,45 @@ class APKResignerGUI:
                 
                 if dev.state == 'unauthorized':
                     self._adb_log(f"设备 {dev.serial} 未授权，请在设备上点击「允许」", "WARNING")
+                
+                # 记录第一个可用设备
+                if dev.is_ready and first_ready_device is None:
+                    first_ready_device = dev
+            
+            # 自动连接：如果没有已选中的设备，且发现了可用设备
+            if self.selected_device is None and first_ready_device is not None:
+                self._adb_log(f"自动连接设备: {first_ready_device.display_name}")
+                try:
+                    self.adb_manager.select_device(first_ready_device.serial)
+                    self.selected_device = first_ready_device.serial
+                    
+                    # 更新UI状态
+                    self.device_status_label.config(
+                        text=f"🟢 已连接: {first_ready_device.serial}", 
+                        foreground="green"
+                    )
+                    
+                    # 获取并显示设备信息
+                    info = self.adb_manager.get_device_info()
+                    self.device_info_text.config(state="normal")
+                    self.device_info_text.delete(1.0, tk.END)
+                    for key, value in info.items():
+                        self.device_info_text.insert(tk.END, f"{key}: {value}\n")
+                    self.device_info_text.config(state="disabled")
+                    
+                    # 选中树形列表中的该设备
+                    for item_id in self.device_tree.get_children():
+                        values = self.device_tree.item(item_id, 'values')
+                        if values and values[0] == first_ready_device.serial:
+                            self.device_tree.selection_set(item_id)
+                            self.device_tree.see(item_id)
+                            break
+                    
+                    self._adb_log(f"✅ 已自动连接: {first_ready_device.display_name}")
+                    
+                except Exception as e:
+                    self._adb_log(f"自动连接失败: {e}", "WARNING")
+                    # 自动连接失败不弹窗，仅记录日志
         
         except Exception as e:
             self._adb_log(f"刷新失败: {e}", "ERROR")
