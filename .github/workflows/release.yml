@@ -57,8 +57,15 @@ jobs:
       - name: Build portable EXE
         shell: bash
         run: |
-          python build_portable.py 2>&1
-          exit ${PIPESTATUS[0]}
+          python build_portable.py 2>&1 | tee build.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "=== BUILD FAILED ==="
+            echo "Exit code: $BUILD_EXIT"
+            echo "=== LAST 100 LINES OF LOG ==="
+            tail -n 100 build.log
+            exit $BUILD_EXIT
+          fi
 
       - name: Rename output
         run: |
