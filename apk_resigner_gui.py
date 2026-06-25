@@ -1417,37 +1417,56 @@ class APKResignerGUI:
 
     def _full_process(self, apk):
         self.log("="*50, "INFO")
-        self.log("🔧 修改内容+签名流程", "INFO")
+        self.log("修改内容+签名流程", "INFO")
         self.log("="*50, "INFO")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         keystore = self._get_keystore()
 
-        # 复制原 APK，保留原始结构（文件顺序、对齐信息）
+        # 复制原 APK
         temp_apk = self.work_dir / f"temp_{timestamp}.apk"
         shutil.copy2(apk, temp_apk)
 
-        # 直接在 APK 中追加 test.txt，不解包重打包
-        with zipfile.ZipFile(temp_apk, 'a') as zf:
-            zf.writestr('assets/test.txt', 'MODIFIED BY APK_RESIGNER')
-
-        self.log(f"  ✓ 已添加 test.txt", "SUCCESS")
-        self.log(f"    路径: assets/test.txt", "INFO")
+        # 解压 → 清除旧签名 → 添加 test.txt → 重新打包
+        # 避免 zipfile 'a' 模式破坏 V2 签名块位置
+        temp_dir = self.work_dir / f"temp_dir_{timestamp}"
+        self._unzip_apk(temp_apk, temp_dir)
+        
+        # 清除旧签名（META-INF）
+        meta_dir = temp_dir / "META-INF"
+        if meta_dir.exists():
+            shutil.rmtree(meta_dir)
+            self.log("  已清除旧签名 (META-INF)", "INFO")
+        
+        # 添加 test.txt
+        assets_dir = temp_dir / "assets"
+        assets_dir.mkdir(exist_ok=True)
+        with open(assets_dir / "test.txt", 'w', encoding='utf-8') as f:
+            f.write('MODIFIED BY APK_RESIGNER')
+        self.log("  已添加 test.txt", "SUCCESS")
+        self.log("    路径: assets/test.txt", "INFO")
+        
+        # 重新打包
+        repacked = self.work_dir / f"repacked_{timestamp}.apk"
+        self._rezip_apk(temp_dir, repacked)
+        
+        # 清理临时目录
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
         aligned = self.work_dir / f"aligned_{timestamp}.apk"
-        self._zipalign(temp_apk, aligned)
+        self._zipalign(repacked, aligned)
 
         scheme = self.detected_scheme.get()
         self._sign_with_scheme(aligned, keystore, scheme)
 
-        # 输出到原 APK 同目录，命名：原文件名_resigned_时间戳.apk
+        # 输出到原 APK 同目录
         apk_path = Path(apk)
         final = apk_path.parent / f"{apk_path.stem}_resigned_{timestamp}.apk"
         shutil.copy(aligned, final)
 
-        self.log(f"\n✅ 完成！", "SUCCESS")
-        self.log(f"📦 最终 APK: {final}", "SUCCESS")
-        self.log(f"📋 签名方案: {scheme}", "INFO")
-        self.log(f"🔑 密钥库: {keystore}", "INFO")
+        self.log(f"\n完成！", "SUCCESS")
+        self.log(f"最终 APK: {final}", "SUCCESS")
+        self.log(f"签名方案: {scheme}", "INFO")
+        self.log(f"密钥库: {keystore}", "INFO")
         self._log_signature_details(final, scheme)
         self._compare_signatures(apk, final)
         self.root.after(0, lambda: self._show_info_dialog("完成", f"签名替换完成！\n\n最终 APK:\n{final}\n\n签名方案: {scheme}\n密钥库:\n{keystore}"))
@@ -1517,25 +1536,76 @@ class APKResignerGUI:
             raise RuntimeError(f"zipalign 失败: {result.stderr}")
 
     def _sign_with_scheme(self, apk_path, keystore, scheme="v2+v3+v4"):
+        """使用 apksigner 签名，签名前自动清除旧 META-INF"""
+        apk_path = Path(apk_path)
+        
+        # 预处理：清除旧的 META-INF（防止残留导致签名冲突）
+        self.log(f"[+] 预处理: 清除旧签名...", "INFO")
+        temp_dir = self.work_dir / f"sign_prep_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            self._unzip_apk(apk_path, temp_dir)
+            meta_dir = temp_dir / "META-INF"
+            if meta_dir.exists():
+                shutil.rmtree(meta_dir)
+                self.log("  已清除旧 META-INF", "INFO")
+            
+            # 重新打包
+            cleaned_apk = self.work_dir / f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.apk"
+            self._rezip_apk(temp_dir, cleaned_apk)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # 使用清理后的APK进行签名
+            apk_path = cleaned_apk
+        except Exception as e:
+            self.log(f"  预处理失败，使用原始APK: {e}", "WARNING")
+        
         self.log(f"[+] 签名 APK...")
         self.log(f"    签名方案: {scheme}", "INFO")
         cmd = self.tools.get_cmd('apksigner')
         if not cmd:
             raise RuntimeError("apksigner 不可用")
-        cmd += ['sign', '--ks', str(keystore), '--ks-key-alias', self.alias.get(), '--ks-pass', f'pass:{self.password.get()}', '--key-pass', f'pass:{self.password.get()}', '--min-sdk-version', '21', str(apk_path)]
+        
+        # 基础命令
+        base_cmd = [
+            'sign',
+            '--ks', str(keystore),
+            '--ks-key-alias', self.alias.get(),
+            '--ks-pass', f'pass:{self.password.get()}',
+            '--key-pass', f'pass:{self.password.get()}',
+            '--min-sdk-version', '21'
+        ]
+        
+        # 根据方案添加签名参数
         if scheme == "v1":
-            cmd = cmd[:-1] + ['--v1-signing-enabled', 'true', '--v2-signing-enabled', 'false', '--v3-signing-enabled', 'false', '--v4-signing-enabled', 'false'] + [str(apk_path)]
+            base_cmd += [
+                '--v1-signing-enabled', 'true',
+                '--v2-signing-enabled', 'false',
+                '--v3-signing-enabled', 'false',
+                '--v4-signing-enabled', 'false'
+            ]
         elif scheme == "v2":
-            cmd = cmd[:-1] + ['--v1-signing-enabled', 'false', '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'false', '--v4-signing-enabled', 'false'] + [str(apk_path)]
-        elif scheme == "v4":
-            cmd = cmd[:-1] + ['--v1-signing-enabled', 'false', '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'true', '--v4-signing-enabled', 'true'] + [str(apk_path)]
-        else:
-            cmd = cmd[:-1] + ['--v1-signing-enabled', 'false', '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'true', '--v4-signing-enabled', 'true'] + [str(apk_path)]
+            base_cmd += [
+                '--v1-signing-enabled', 'false',
+                '--v2-signing-enabled', 'true',
+                '--v3-signing-enabled', 'false',
+                '--v4-signing-enabled', 'false'
+            ]
+        else:  # v2+v3+v4 或 v4
+            base_cmd += [
+                '--v1-signing-enabled', 'false',
+                '--v2-signing-enabled', 'true',
+                '--v3-signing-enabled', 'true',
+                '--v4-signing-enabled', 'true'
+            ]
+        
+        base_cmd.append(str(apk_path))
+        cmd += base_cmd
+        
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
-            self.log(f"  ✓ 签名完成", "SUCCESS")
+            self.log(f"  签名完成", "SUCCESS")
         else:
-            self.log(f"  ✗ 签名失败: {result.stderr}", "ERROR")
+            self.log(f"  签名失败: {result.stderr}", "ERROR")
             raise RuntimeError("签名失败")
 
     def _log_signature_details(self, apk, scheme):
