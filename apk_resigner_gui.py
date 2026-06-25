@@ -552,10 +552,9 @@ class APKResignerGUI:
     def _build_app_tab(self, parent):
         """构建应用列表标签页"""
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
         parent.rowconfigure(2, weight=1)
 
-        # 顶部控制栏
+        # 顶部控制栏（包含操作按钮，上移）
         ctrl_frame = ttk.Frame(parent)
         ctrl_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
 
@@ -573,6 +572,14 @@ class APKResignerGUI:
         ttk.Button(ctrl_frame, text="🔍", command=self._filter_apps, width=4).pack(side=tk.LEFT, padx=2)
         ttk.Button(ctrl_frame, text="🔄 扫描", command=self._scan_apps, width=10).pack(side=tk.LEFT, padx=10)
 
+        # 操作按钮（上移到列表上方）
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
+
         # 应用列表 Treeview
         columns = ('name', 'package', 'version', 'type', 'path')
         self.app_tree = ttk.Treeview(parent, columns=columns, show='headings', height=12)
@@ -586,28 +593,19 @@ class APKResignerGUI:
         self.app_tree.column('version', width=60)
         self.app_tree.column('type', width=60)
         self.app_tree.column('path', width=300)
-        self.app_tree.grid(row=1, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.app_tree.grid(row=2, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # 滚动条
         vsb = ttk.Scrollbar(parent, orient="vertical", command=self.app_tree.yview)
-        vsb.grid(row=1, column=1, rowspan=2, sticky=(tk.N, tk.S))
+        vsb.grid(row=2, column=1, rowspan=2, sticky=(tk.N, tk.S))
         self.app_tree.configure(yscrollcommand=vsb.set)
-
-        # 操作按钮
-        btn_frame = ttk.Frame(parent)
-        btn_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
-
-        ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
 
     def _build_backup_tab(self, parent):
         """构建备份还原标签页"""
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(1, weight=1)
-        parent.rowconfigure(2, weight=1)
 
-        # 顶部选择
+        # 顶部控制栏（包含操作按钮，上移）
         top_frame = ttk.Frame(parent)
         top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
 
@@ -616,6 +614,14 @@ class APKResignerGUI:
         ttk.Combobox(top_frame, textvariable=self.backup_package_var, width=30, state="readonly").pack(side=tk.LEFT, padx=5)
         ttk.Button(top_frame, text="🔄 刷新", command=self._refresh_backups, width=10).pack(side=tk.LEFT, padx=10)
 
+        # 操作按钮（上移到列表上方）
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Button(btn_frame, text="♻️ 还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🗑️ 删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🧹 清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
+        
         # 备份列表 Treeview
         columns = ('time', 'device', 'version', 'size', 'actions')
         self.backup_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
@@ -629,16 +635,8 @@ class APKResignerGUI:
         self.backup_tree.column('version', width=80)
         self.backup_tree.column('size', width=80)
         self.backup_tree.column('actions', width=150)
-        self.backup_tree.grid(row=1, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.backup_tree.grid(row=2, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # 操作按钮
-        btn_frame = ttk.Frame(parent)
-        btn_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
-
-        ttk.Button(btn_frame, text="♻️ 还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🗑️ 删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🧹 清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
-        
         # 自动刷新备份列表
         self.root.after(100, self._refresh_backups)
 
