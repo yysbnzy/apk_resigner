@@ -596,13 +596,30 @@ class ADBManager:
         Returns:
             Tuple[int, str, str]: (returncode, stdout, stderr)
         """
-        cmd = list(self.adb_cmd)  # 复制，避免修改原列表
+        # 防御性检查：确保 adb_cmd 中所有元素都是字符串
+        cmd = []
+        for item in self.adb_cmd:
+            if isinstance(item, (list, tuple)):
+                cmd.extend(str(x) for x in item)
+            else:
+                cmd.append(str(item))
         
-        # 添加设备选择
-        if self.selected_device and subcmd[0] not in ('devices', 'version', 'connect', 'disconnect'):
-            cmd.extend(['-s', self.selected_device])
+        # 添加设备选择（确保 selected_device 是字符串）
+        device = str(self.selected_device) if self.selected_device else None
+        if device and subcmd and subcmd[0] not in ('devices', 'version', 'connect', 'disconnect'):
+            cmd.extend(['-s', device])
         
-        cmd.extend(subcmd)
+        # 防御性检查：确保 subcmd 中所有元素都是字符串
+        for item in subcmd:
+            if isinstance(item, (list, tuple)):
+                cmd.extend(str(x) for x in item)
+            else:
+                cmd.append(str(item))
+        
+        # 最终检查：确保 cmd 中所有元素都是字符串
+        for i, c in enumerate(cmd):
+            if not isinstance(c, str):
+                raise ADBError(f"ADB命令构造错误: 第{i}个参数不是字符串 (类型={type(c).__name__}, 值={c})")
         
         try:
             result = subprocess.run(
@@ -616,6 +633,9 @@ class ADBManager:
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
             return -1, "", f"命令超时 ({timeout}s): {' '.join(cmd)}"
+        except TypeError as e:
+            # 捕获类型错误，提供详细信息
+            return -1, "", f"命令参数类型错误: {e} | cmd={[type(c).__name__ for c in cmd]}"
         except Exception as e:
             return -1, "", str(e)
     

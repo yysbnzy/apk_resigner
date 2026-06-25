@@ -534,9 +534,9 @@ class APKResignerGUI:
         btn_frame = ttk.Frame(left_frame)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=5)
         
-        ttk.Button(btn_frame, text="🔄 刷新", command=self._refresh_devices, width=12).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="✅ 连接", command=self._connect_device, width=12).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="❌ 断开", command=self._disconnect_device, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="刷新", command=self._refresh_devices, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="连接", command=self._connect_device, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="断开", command=self._disconnect_device, width=12).pack(side=tk.LEFT, padx=2)
 
         # 右侧：设备详情
         right_frame = ttk.LabelFrame(parent, text="设备详情", padding="10")
@@ -545,7 +545,7 @@ class APKResignerGUI:
         right_frame.rowconfigure(1, weight=1)
 
         # 状态指示器
-        self.device_status_label = ttk.Label(right_frame, text="🔴 未连接", font=("Microsoft YaHei", 12, "bold"), foreground="red")
+        self.device_status_label = ttk.Label(right_frame, text="未连接", font=("Microsoft YaHei", 12, "bold"), foreground="red")
         self.device_status_label.grid(row=0, column=0, sticky=tk.W, pady=5)
 
         # 详情文本框
@@ -574,32 +574,32 @@ class APKResignerGUI:
         ttk.Label(ctrl_frame, text="搜索:").pack(side=tk.LEFT, padx=(20, 5))
         self.app_search_var = tk.StringVar()
         ttk.Entry(ctrl_frame, textvariable=self.app_search_var, width=30).pack(side=tk.LEFT, padx=5)
-        ttk.Button(ctrl_frame, text="🔍", command=self._filter_apps, width=4).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl_frame, text="🔄 扫描", command=self._scan_apps, width=10).pack(side=tk.LEFT, padx=10)
+        ttk.Button(ctrl_frame, text="搜索", command=self._filter_apps, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ctrl_frame, text="扫描", command=self._scan_apps, width=10).pack(side=tk.LEFT, padx=10)
 
         # 操作按钮（上移到列表上方）
         btn_frame = ttk.Frame(parent)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
 
         # 左侧：主要操作
-        ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
         
         # 右侧：安装操作（签名完成后启用）
         ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.RIGHT, padx=10, fill=tk.Y)
         
-        self.btn_install_overwrite = ttk.Button(btn_frame, text="📲 覆盖安装", 
+        self.btn_install_overwrite = ttk.Button(btn_frame, text="覆盖安装", 
                                                  command=self._install_overwrite_signed, 
                                                  width=15, state="disabled")
         self.btn_install_overwrite.pack(side=tk.RIGHT, padx=5)
         
-        self.btn_install_uninstall = ttk.Button(btn_frame, text="🔄 卸载后安装", 
+        self.btn_install_uninstall = ttk.Button(btn_frame, text="卸载后安装", 
                                                  command=self._install_uninstall_signed, 
                                                  width=15, state="disabled")
         self.btn_install_uninstall.pack(side=tk.RIGHT, padx=5)
         
-        self.btn_export_signed = ttk.Button(btn_frame, text="💾 导出签名APK", 
+        self.btn_export_signed = ttk.Button(btn_frame, text="导出签名APK", 
                                              command=self._export_signed_apk, 
                                              width=15, state="disabled")
         self.btn_export_signed.pack(side=tk.RIGHT, padx=5)
@@ -737,9 +737,9 @@ class APKResignerGUI:
             
             for dev in devices:
                 state_text = {
-                    'device': '✅ 已连接',
-                    'unauthorized': '⚠️ 未授权',
-                    'offline': '❌ 离线'
+                    'device': '[已连接]',
+                    'unauthorized': '[未授权]',
+                    'offline': '[离线]'
                 }.get(dev.state, dev.state)
                 
                 self.device_tree.insert('', tk.END, values=(
@@ -762,7 +762,7 @@ class APKResignerGUI:
                     
                     # 更新UI状态
                     self.device_status_label.config(
-                        text=f"🟢 已连接: {first_ready_device.serial}", 
+                        text=f"[已连接]: {first_ready_device.serial}", 
                         foreground="green"
                     )
                     
@@ -803,26 +803,26 @@ class APKResignerGUI:
         serial = values[0]
         state_text = values[1] if len(values) > 1 else ""
         
-        # 如果已经显示为"已连接"，直接复用（避免select_device重新验证失败）
-        if '已连接' in state_text and self.adb_manager.selected_device == serial:
-            self.selected_device = serial
-            self._adb_log(f"设备 {serial} 已经是连接状态，直接复用", "SUCCESS")
+        # USB已连接设备直接复用，不走select_device验证
+        if '已连接' in state_text:
+            self._adb_log(f"USB设备 {serial} 已连接，直接复用")
+            self.adb_manager.selected_device = str(serial)
+            self.selected_device = str(serial)
             self._update_device_ui_connected(serial)
             return
         
-        # 尝试标准连接流程
+        # 网络ADB或其他状态：走标准连接流程
         try:
-            self.adb_manager.select_device(serial)
-            self.selected_device = serial
+            self.adb_manager.select_device(str(serial))
+            self.selected_device = str(serial)
             self._update_device_ui_connected(serial)
             
         except Exception as e:
             self._adb_log(f"标准连接失败，尝试降级处理: {e}", "WARNING")
-            # 降级：直接设置selected_device，不再重新验证
+            # 降级：直接设置selected_device
             try:
-                self.adb_manager.selected_device = serial
-                self.selected_device = serial
-                # 尝试获取设备信息验证
+                self.adb_manager.selected_device = str(serial)
+                self.selected_device = str(serial)
                 info = self.adb_manager.get_device_info()
                 self._update_device_ui_connected(serial, info)
                 self._adb_log(f"降级连接成功: {serial}", "SUCCESS")
@@ -838,7 +838,7 @@ class APKResignerGUI:
             except Exception:
                 info = {}
         
-        self.device_status_label.config(text=f"🟢 已连接: {serial}", foreground="green")
+        self.device_status_label.config(text=f"[已连接]: {serial}", foreground="green")
         
         self.device_info_text.config(state="normal")
         self.device_info_text.delete(1.0, tk.END)
@@ -856,7 +856,7 @@ class APKResignerGUI:
         if self.adb_manager:
             self.adb_manager.selected_device = None
         
-        self.device_status_label.config(text="🔴 未连接", foreground="red")
+        self.device_status_label.config(text="[未连接]", foreground="red")
         self.device_info_text.config(state="normal")
         self.device_info_text.delete(1.0, tk.END)
         self.device_info_text.insert(tk.END, "点击「刷新」查看已连接设备\n")
