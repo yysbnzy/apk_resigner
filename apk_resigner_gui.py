@@ -295,6 +295,11 @@ class APKResignerGUI:
         notebook.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         main_frame.rowconfigure(row, weight=1)
 
+        # Tab 5: 本地签名（移到最前面）
+        config_tab = ttk.Frame(notebook, padding="10")
+        notebook.add(config_tab, text="📝 本地APK签名")
+        self._build_config_tab(config_tab)
+
         # Tab 1: 设备连接
         device_tab = ttk.Frame(notebook, padding="10")
         notebook.add(device_tab, text="📱 ADB设备")
@@ -314,14 +319,9 @@ class APKResignerGUI:
         log_tab = ttk.Frame(notebook, padding="10")
         notebook.add(log_tab, text="📝 ADB日志")
         self._build_adb_log_tab(log_tab)
-        
-        # Tab 5: 配置模块（本地签名）
-        config_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(config_tab, text="⚙️ 配置")
-        self._build_config_tab(config_tab)
 
     def _build_config_tab(self, parent):
-        """构建配置模块标签页（本地APK签名）"""
+        """构建本地APK签名标签页（使用主界面已选的APK文件）"""
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
         
@@ -335,28 +335,37 @@ class APKResignerGUI:
         local_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
         local_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(local_frame, text="APK 文件:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.local_apk_var = tk.StringVar()
-        ttk.Entry(local_frame, textvariable=self.local_apk_var).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
-        ttk.Button(local_frame, text="浏览...", command=self._browse_local_apk).grid(row=0, column=2, padx=5, pady=5)
+        # 提示使用主界面已选的APK
+        ttk.Label(local_frame, text="使用主界面选择的APK文件", foreground="gray").grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        self.local_apk_path_label = ttk.Label(local_frame, text="当前APK: 未选择", foreground="blue")
+        self.local_apk_path_label.grid(row=1, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
         
-        ttk.Label(local_frame, text="签名方案:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        # 绑定主界面apk_path变化，自动更新显示
+        def update_local_apk_label(*args):
+            path = self.apk_path.get()
+            if path:
+                self.local_apk_path_label.config(text=f"当前APK: {path}", foreground="green")
+            else:
+                self.local_apk_path_label.config(text="当前APK: 未选择", foreground="blue")
+        self.apk_path.trace_add("write", update_local_apk_label)
+        
+        ttk.Label(local_frame, text="签名方案:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
         self.local_scheme_var = tk.StringVar(value="v2+v3+v4")
         scheme_combo = ttk.Combobox(local_frame, textvariable=self.local_scheme_var, 
                                     values=["v1", "v2", "v2+v3", "v2+v3+v4", "v4"], 
                                     state="readonly", width=15)
-        scheme_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        scheme_combo.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
         
-        ttk.Label(local_frame, text="密钥库:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(local_frame, text="密钥库:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
         self.local_keystore_var = tk.StringVar()
-        ttk.Entry(local_frame, textvariable=self.local_keystore_var, state="readonly").grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
-        ttk.Button(local_frame, text="浏览...", command=self._browse_local_keystore).grid(row=2, column=2, padx=5, pady=5)
+        ttk.Entry(local_frame, textvariable=self.local_keystore_var, state="readonly").grid(row=3, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        ttk.Button(local_frame, text="浏览...", command=self._browse_local_keystore).grid(row=3, column=2, padx=5, pady=5)
         
-        ttk.Checkbutton(local_frame, text="自动生成测试密钥", variable=self.auto_generate_key).grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        ttk.Checkbutton(local_frame, text="自动生成测试密钥", variable=self.auto_generate_key).grid(row=4, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
         
         # 签名按钮
         btn_frame = ttk.Frame(local_frame)
-        btn_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        btn_frame.grid(row=5, column=0, columnspan=3, pady=10)
         
         ttk.Button(btn_frame, text="🔧 修改内容+签名", 
                    command=lambda: self._local_full_process(), 
@@ -380,22 +389,15 @@ class APKResignerGUI:
         help_frame = ttk.LabelFrame(main_container, text="说明", padding="10")
         help_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
         
-        help_text = """本地签名功能：不连接ADB设备时，可以选择本地APK文件进行重签名。
+        help_text = """本地签名功能：不连接ADB设备时，直接使用主界面选择的APK文件进行重签名。
 • 修改内容+签名：反编译APK，修改内容后重新打包并签名
 • 快速签名替换：不解包，直接去除原签名并重新签名
 • 支持 V1/V2/V3/V4 签名方案"""
         ttk.Label(help_frame, text=help_text, justify=tk.LEFT, wraplength=500).pack(anchor=tk.W)
     
     def _browse_local_apk(self):
-        """浏览本地APK文件"""
-        path = filedialog.askopenfilename(
-            title="选择 APK 文件",
-            filetypes=[("APK 文件", "*.apk"), ("所有文件", "*.*")]
-        )
-        if path:
-            self.local_apk_var.set(path)
-            self.apk_path.set(path)
-            self.detect_apk_scheme(path)
+        """浏览本地APK文件（已废弃，使用主界面文件选择）"""
+        pass
     
     def _browse_local_keystore(self):
         """浏览密钥库文件"""
