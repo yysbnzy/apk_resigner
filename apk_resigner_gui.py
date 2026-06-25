@@ -556,7 +556,8 @@ class APKResignerGUI:
     def _build_app_tab(self, parent):
         """构建应用列表标签页"""
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(2, weight=1)
+        parent.columnconfigure(1, weight=0)  # 右侧按钮列不扩展
+        parent.rowconfigure(2, weight=1)     # 列表区域占满剩余空间
 
         # 顶部控制栏（包含操作按钮，上移）
         ctrl_frame = ttk.Frame(parent)
@@ -583,6 +584,29 @@ class APKResignerGUI:
         ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
+        
+        # 右侧安装操作按钮（签名完成后启用）
+        install_frame = ttk.LabelFrame(parent, text="安装操作（需先签名）", padding="5")
+        install_frame.grid(row=1, column=1, sticky=(tk.N, tk.S), padx=5, pady=5)
+        
+        self.btn_install_overwrite = ttk.Button(install_frame, text="📲 覆盖安装", 
+                                                 command=self._install_overwrite_signed, 
+                                                 width=15, state="disabled")
+        self.btn_install_overwrite.pack(pady=3)
+        
+        self.btn_install_uninstall = ttk.Button(install_frame, text="🔄 卸载后安装", 
+                                                 command=self._install_uninstall_signed, 
+                                                 width=15, state="disabled")
+        self.btn_install_uninstall.pack(pady=3)
+        
+        self.btn_export_signed = ttk.Button(install_frame, text="💾 导出签名APK", 
+                                             command=self._export_signed_apk, 
+                                             width=15, state="disabled")
+        self.btn_export_signed.pack(pady=3)
+        
+        # 当前签名后的APK路径
+        self.signed_apk_path = None
+        self.current_package_name = None
 
         # 应用列表 Treeview
         columns = ('name', 'package', 'version', 'type', 'path')
@@ -933,10 +957,13 @@ class APKResignerGUI:
         thread.start()
 
     def _do_one_click_process(self, package_name):
-        """一键处理的后台线程"""
+        """一键处理的后台线程：导出 → 备份 → 签名"""
+        # 禁用安装按钮（开始新流程时重置）
+        self.root.after(0, self._disable_install_buttons)
+        
         try:
             # 1. 导出 APK
-            self._adb_log(f"[1/5] 导出 APK...")
+            self._adb_log(f"[1/4] 导出 APK...")
             export_result = self.adb_manager.export_apk(package_name, self.work_dir)
             if not export_result.success:
                 self._adb_log(f"导出失败: {export_result.error}", "ERROR")
@@ -945,7 +972,7 @@ class APKResignerGUI:
             self._adb_log(f"  ✓ 导出成功: {export_result.base_apk}", "SUCCESS")
             
             # 2. 自动备份
-            self._adb_log(f"[2/5] 创建备份...")
+            self._adb_log(f"[2/4] 创建备份...")
             device_info = self.adb_manager.get_device_info()
             backup_result = self.backup_manager.create_backup_from_export(export_result, device_info)
             if backup_result.success:
@@ -955,7 +982,7 @@ class APKResignerGUI:
                 # 继续执行签名，不阻塞流程
             
             # 3. 签名（复用现有方法）
-            self._adb_log(f"[3/5] 执行签名...")
+            self._adb_log(f"[3/4] 执行签名...")
             base_apk = export_result.base_apk
             self.apk_path.set(base_apk)
             self.detect_apk_scheme(base_apk)
@@ -968,7 +995,7 @@ class APKResignerGUI:
             self.root.after(0, lambda: self._show_error_dialog("错误", f"一键处理失败: {e}"))
 
     def _run_sign_and_install(self, base_apk, package_name):
-        """在主线程执行签名和安装"""
+        """在主线程执行签名"""
         try:
             # 签名
             self._full_process(base_apk)
@@ -986,41 +1013,76 @@ class APKResignerGUI:
             resigned_apk = resigned_files[0]
             self._adb_log(f"  ✓ 签名完成: {resigned_apk}", "SUCCESS")
             
-            # 4. 显示安装选项
-            self._adb_log(f"[4/5] 等待安装方式选择...")
-            self._show_install_dialog(resigned_apk, package_name)
+            # 保存签名后的APK路径和包名，启用安装按钮
+            self.signed_apk_path = resigned_apk
+            self.current_package_name = package_name
+            self._enable_install_buttons()
+            
+            self._adb_log("[4/4] 签名完成，可使用右侧安装按钮进行操作", "SUCCESS")
+            self.status_var.set(f"签名完成: {Path(resigned_apk).name}")
             
         except Exception as e:
             self._adb_log(f"签名失败: {e}", "ERROR")
             self._show_error_dialog("错误", f"签名失败: {e}")
 
+    def _enable_install_buttons(self):
+        """启用安装操作按钮"""
+        try:
+            self.btn_install_overwrite.config(state="normal")
+            self.btn_install_uninstall.config(state="normal")
+            self.btn_export_signed.config(state="normal")
+        except Exception:
+            pass
+    
+    def _disable_install_buttons(self):
+        """禁用安装操作按钮"""
+        try:
+            self.btn_install_overwrite.config(state="disabled")
+            self.btn_install_uninstall.config(state="disabled")
+            self.btn_export_signed.config(state="disabled")
+        except Exception:
+            pass
+    
+    def _install_overwrite_signed(self):
+        """覆盖安装已签名的APK"""
+        if not self.signed_apk_path or not Path(self.signed_apk_path).exists():
+            messagebox.showwarning("提示", "请先执行一键处理完成签名")
+            return
+        self._do_install("overwrite", self.signed_apk_path)
+    
+    def _install_uninstall_signed(self):
+        """卸载后安装已签名的APK"""
+        if not self.signed_apk_path or not Path(self.signed_apk_path).exists():
+            messagebox.showwarning("提示", "请先执行一键处理完成签名")
+            return
+        if not self.current_package_name:
+            messagebox.showwarning("提示", "无法获取包名")
+            return
+        self._do_install("uninstall", self.signed_apk_path, self.current_package_name)
+    
+    def _export_signed_apk(self):
+        """导出已签名的APK到指定位置"""
+        if not self.signed_apk_path or not Path(self.signed_apk_path).exists():
+            messagebox.showwarning("提示", "请先执行一键处理完成签名")
+            return
+        
+        # 弹出保存对话框
+        from tkinter import filedialog
+        dest = filedialog.asksaveasfilename(
+            title="保存签名后的APK",
+            defaultextension=".apk",
+            initialfile=Path(self.signed_apk_path).name,
+            filetypes=[("APK 文件", "*.apk"), ("所有文件", "*.*")]
+        )
+        if dest:
+            import shutil
+            shutil.copy2(self.signed_apk_path, dest)
+            self._adb_log(f"签名APK已导出到: {dest}", "SUCCESS")
+            messagebox.showinfo("导出成功", f"签名APK已保存到:\n{dest}")
+
     def _show_install_dialog(self, apk_path, package_name):
-        """显示安装方式选择对话框"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("安装方式选择")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text=f"APK 已签名: {Path(apk_path).name}", font=("Microsoft YaHei", 10, "bold")).pack(pady=10)
-
-        def install_overwrite():
-            dialog.destroy()
-            self._do_install("overwrite", apk_path)
-
-        def install_uninstall():
-            dialog.destroy()
-            self._do_install("uninstall", apk_path, package_name)
-
-        def skip_install():
-            dialog.destroy()
-            self._adb_log("[5/5] 用户选择跳过安装")
-
-        ttk.Button(dialog, text="直接覆盖 (-r -d -t)", command=install_overwrite, width=25).pack(pady=5)
-        ttk.Button(dialog, text="卸载后安装 (⚠️ 清除数据)", command=install_uninstall, width=25).pack(pady=5)
-        ttk.Button(dialog, text="仅保存，不安装", command=skip_install, width=25).pack(pady=5)
-
-        ttk.Label(dialog, text="⚠️ 预期结果: 签名不匹配，安装将被拒绝", foreground="orange").pack(pady=10)
+        """显示安装方式选择对话框（已废弃，使用右侧按钮替代）"""
+        pass
 
     def _do_install(self, mode, apk_path, package_name=None):
         """执行安装"""
