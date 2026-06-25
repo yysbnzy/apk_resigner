@@ -319,6 +319,10 @@ class APKResignerGUI:
         log_tab = ttk.Frame(notebook, padding="10")
         notebook.add(log_tab, text="📝 ADB日志")
         self._build_adb_log_tab(log_tab)
+        
+        # 保存 notebook 引用并绑定页签切换事件
+        self._notebook = notebook
+        notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
     def _build_config_tab(self, parent):
         """构建本地APK签名标签页（使用主界面已选的APK文件）"""
@@ -665,16 +669,23 @@ class APKResignerGUI:
         except Exception:
             pass
 
+    def _on_notebook_tab_changed(self, event):
+        """Notebook 页签切换事件处理"""
+        notebook = event.widget
+        current_tab = notebook.tab(notebook.select(), "text")
+        
+        # 切换到备份还原页签时自动刷新列表
+        if current_tab == "💾 备份还原":
+            self._refresh_backups()
+
     def _do_adb_log(self, timestamp, message, level):
         """实际执行 ADB 日志插入（必须在主线程调用）"""
         try:
             if hasattr(self, 'adb_log_text') and self.adb_log_text:
-                self.adb_log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
+                self.adb_log_text.insert(tk.END, f"[{timestamp}] [{level}] {message}\n", level)
                 self.adb_log_text.see(tk.END)
         except Exception:
             pass
-        # 同时输出到主日志
-        self.log(f"[ADB] {message}", level)
 
     def _clear_adb_log(self):
         """清空 ADB 日志"""
