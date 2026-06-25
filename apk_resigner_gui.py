@@ -172,9 +172,9 @@ class ToolManager:
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 v2.2.0")
-        self.root.geometry("900x1050")
-        self.root.minsize(800, 800)
+        self.root.title("APK 签名替换工具 v2.2.1")
+        self.root.geometry("900x800")
+        self.root.minsize(800, 700)
 
         self.work_dir = Path(os.path.expanduser("~")) / "apk_resign_work"
         self.work_dir.mkdir(exist_ok=True)
