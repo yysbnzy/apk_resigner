@@ -227,9 +227,9 @@ class APKResignerGUI:
             return
         
         try:
-            self.adb_manager = ADBManager(self.tools)
+            self.adb_manager = ADBManager(self.tools, logger=self._adb_cmd_log)
             self.backup_manager = BackupManager()
-            self.install_manager = InstallManager(self.adb_manager)
+            self.install_manager = InstallManager(self.adb_manager, logger=self._adb_cmd_log)
             print("ADB 模块初始化完成")
         except Exception as e:
             print(f"ADB 模块初始化失败: {e}")
@@ -631,28 +631,33 @@ class APKResignerGUI:
     def _build_backup_tab(self, parent):
         """构建备份还原标签页"""
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
+        parent.rowconfigure(2, weight=1)  # 给Treeview分配扩展空间
 
-        # 顶部控制栏（包含操作按钮，上移）
+        # 顶部控制栏
         top_frame = ttk.Frame(parent)
-        top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=3)
 
         ttk.Label(top_frame, text="应用:").pack(side=tk.LEFT, padx=5)
         self.backup_package_var = tk.StringVar()
         ttk.Combobox(top_frame, textvariable=self.backup_package_var, width=30, state="readonly").pack(side=tk.LEFT, padx=5)
-        ttk.Button(top_frame, text="🔄 刷新", command=self._refresh_backups, width=10).pack(side=tk.LEFT, padx=10)
+        ttk.Button(top_frame, text="刷新", command=self._refresh_backups, width=10).pack(side=tk.LEFT, padx=10)
 
-        # 操作按钮（上移到列表上方）
+        # 操作按钮（紧跟顶部，无额外padding）
         btn_frame = ttk.Frame(parent)
-        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        ttk.Button(btn_frame, text="♻️ 还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🗑️ 删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🧹 清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="还原选中", command=self._restore_selected_backup, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="删除", command=self._delete_selected_backup, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="清理旧备份", command=self._cleanup_old_backups, width=15).pack(side=tk.LEFT, padx=5)
         
-        # 备份列表 Treeview
+        # 备份列表 Treeview（占据所有剩余空间）
+        tree_frame = ttk.Frame(parent)
+        tree_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        
         columns = ('time', 'device', 'version', 'size', 'actions')
-        self.backup_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
+        self.backup_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=8)
         self.backup_tree.heading('time', text='备份时间')
         self.backup_tree.heading('device', text='设备')
         self.backup_tree.heading('version', text='版本')
@@ -663,26 +668,53 @@ class APKResignerGUI:
         self.backup_tree.column('version', width=80)
         self.backup_tree.column('size', width=80)
         self.backup_tree.column('actions', width=150)
-        self.backup_tree.grid(row=2, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.backup_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 滚动条
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.backup_tree.yview)
+        vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.backup_tree.configure(yscrollcommand=vsb.set)
 
         # 自动刷新备份列表
         self.root.after(100, self._refresh_backups)
 
     def _build_adb_log_tab(self, parent):
-        """构建 ADB 操作日志标签页"""
+        """构建 ADB 操作日志标签页（左右分区：左=普通日志，右=ADB命令输入输出）"""
         parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=1)
         parent.rowconfigure(0, weight=1)
-
-        self.adb_log_text = scrolledtext.ScrolledText(parent, wrap=tk.WORD, height=15, font=("Consolas", 9))
-        self.adb_log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        # 左侧：普通日志
+        left_frame = ttk.LabelFrame(parent, text="操作日志", padding="5")
+        left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
+        
+        self.adb_log_text = scrolledtext.ScrolledText(left_frame, wrap=tk.WORD, height=15, font=("Consolas", 9))
+        self.adb_log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.adb_log_text.tag_config("INFO", foreground="blue")
         self.adb_log_text.tag_config("SUCCESS", foreground="green")
         self.adb_log_text.tag_config("ERROR", foreground="red")
         self.adb_log_text.tag_config("WARNING", foreground="orange")
         self.adb_log_text.tag_config("ADB", foreground="purple")
-
-        ttk.Button(parent, text="🧹 清空", command=self._clear_adb_log, width=10).grid(row=1, column=0, sticky=tk.E, pady=5)
+        
+        # 右侧：ADB命令输入输出
+        right_frame = ttk.LabelFrame(parent, text="ADB 命令", padding="5")
+        right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=1)
+        
+        self.adb_cmd_text = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, height=15, font=("Consolas", 9))
+        self.adb_cmd_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.adb_cmd_text.tag_config("CMD", foreground="blue")
+        self.adb_cmd_text.tag_config("OUT", foreground="green")
+        self.adb_cmd_text.tag_config("ERR", foreground="red")
+        
+        # 底部按钮栏
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        ttk.Button(btn_frame, text="清空日志", command=self._clear_adb_log, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="清空命令", command=self._clear_adb_cmd_log, width=12).pack(side=tk.LEFT, padx=5)
 
     def _adb_log(self, message, level="INFO"):
         """ADB 专用日志输出（线程安全）"""
@@ -714,6 +746,32 @@ class APKResignerGUI:
     def _clear_adb_log(self):
         """清空 ADB 日志"""
         self.adb_log_text.delete(1.0, tk.END)
+
+    def _clear_adb_cmd_log(self):
+        """清空 ADB 命令日志"""
+        if hasattr(self, 'adb_cmd_text') and self.adb_cmd_text:
+            self.adb_cmd_text.delete(1.0, tk.END)
+
+    def _adb_cmd_log(self, cmd, stdout, stderr, returncode):
+        """记录 ADB 命令执行到右侧面板"""
+        try:
+            self.root.after(0, lambda: self._do_adb_cmd_log(cmd, stdout, stderr, returncode))
+        except Exception:
+            pass
+
+    def _do_adb_cmd_log(self, cmd, stdout, stderr, returncode):
+        """实际写入 ADB 命令面板（主线程）"""
+        try:
+            if hasattr(self, 'adb_cmd_text') and self.adb_cmd_text:
+                self.adb_cmd_text.insert(tk.END, f"$ {' '.join(cmd)}\n", "CMD")
+                if stdout:
+                    self.adb_cmd_text.insert(tk.END, f"{stdout}\n", "OUT")
+                if stderr:
+                    self.adb_cmd_text.insert(tk.END, f"{stderr}\n", "ERR")
+                self.adb_cmd_text.insert(tk.END, f"[rc={returncode}]\n{'='*40}\n", "OUT")
+                self.adb_cmd_text.see(tk.END)
+        except Exception:
+            pass
 
     # ────────────────────────────────────────
     # ADB 设备操作

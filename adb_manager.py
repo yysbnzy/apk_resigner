@@ -110,14 +110,16 @@ class ADBManager:
         '/data/app/', '/data/user/'
     ]
     
-    def __init__(self, tool_manager=None):
+    def __init__(self, tool_manager=None, logger=None):
         """
         初始化 ADB 管理器
         
         Args:
             tool_manager: 现有 ToolManager 实例，用于查找 ADB 路径
+            logger: 可选的日志回调函数，签名: logger(cmd_list, stdout, stderr, returncode)
         """
         self.tools = tool_manager
+        self.logger = logger
         self.adb_cmd: List[str] = []
         self.selected_device: Optional[str] = None
         self._adb_available: Optional[bool] = None
@@ -630,13 +632,22 @@ class ADBManager:
                 encoding='utf-8',
                 errors='replace'
             )
+            # 记录到命令日志面板
+            if self.logger:
+                self.logger(cmd, result.stdout, result.stderr, result.returncode)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
+            if self.logger:
+                self.logger(cmd, "", f"命令超时 ({timeout}s): {' '.join(cmd)}", -1)
             return -1, "", f"命令超时 ({timeout}s): {' '.join(cmd)}"
         except TypeError as e:
             # 捕获类型错误，提供详细信息
+            if self.logger:
+                self.logger(cmd, "", f"命令参数类型错误: {e} | cmd={[type(c).__name__ for c in cmd]}", -1)
             return -1, "", f"命令参数类型错误: {e} | cmd={[type(c).__name__ for c in cmd]}"
         except Exception as e:
+            if self.logger:
+                self.logger(cmd, "", str(e), -1)
             return -1, "", str(e)
     
     def __repr__(self) -> str:

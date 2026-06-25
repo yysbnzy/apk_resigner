@@ -237,14 +237,16 @@ class InstallManager:
         },
     }
     
-    def __init__(self, adb_manager):
+    def __init__(self, tools, logger=None):
         """
         初始化安装管理器
         
         Args:
             adb_manager: ADBManager 实例
+            logger: 可选的日志回调函数，签名: logger(cmd_list, stdout, stderr, returncode)
         """
         self.adb = adb_manager
+        self.logger = logger
         self._logs: List[InstallLog] = []
     
     # ═══════════════════════════════════════════════════
@@ -611,6 +613,10 @@ class InstallManager:
                     retry_cmd = self._add_no_incremental(cmd)
                     if retry_cmd != cmd:
                         result = self.adb._run(retry_cmd)
+            
+            # 记录到命令日志面板
+            if self.logger:
+                self.logger(cmd, result[1], result[2], result[0])
             
             return result
         else:
