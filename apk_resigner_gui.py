@@ -265,25 +265,24 @@ class APKResignerGUI:
         self.scheme_label.grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
-        self.progress.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.progress.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=2)
 
         # 状态栏
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
-        status_bar.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        status_bar.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        # 删除执行日志区域，所有日志统一显示在 ADB 日志标签页中
-        # Notebook 放在 row=5，与状态栏相邻，分配剩余空间
-        main_frame.rowconfigure(5, weight=1)
+        # Notebook 放在 row=6，与状态栏相邻，分配剩余空间
+        main_frame.rowconfigure(6, weight=1)
 
         # ────────────────────────────────────────
         # 新增 ADB Notebook 标签页
         # ────────────────────────────────────────
         if ADB_AVAILABLE:
-            self._build_adb_notebook(main_frame, 5)
+            self._build_adb_notebook(main_frame, 6)
         else:
             # ADB不可用时的提示
-            ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=5, column=0, columnspan=3, pady=10)
+            ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=6, column=0, columnspan=3, pady=10)
 
     def _build_adb_notebook(self, main_frame, row=8):
         """构建 ADB 相关 Notebook 标签页"""
