@@ -329,6 +329,9 @@ class APKResignerGUI:
         main_container = ttk.Frame(parent)
         main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_container.columnconfigure(0, weight=1)
+        main_container.rowconfigure(0, weight=0)  # 本地签名区域
+        main_container.rowconfigure(1, weight=0)  # 工具区域
+        main_container.rowconfigure(2, weight=1)  # 说明区域占满剩余
         
         # ── 本地APK签名 ──
         local_frame = ttk.LabelFrame(main_container, text="本地 APK 签名", padding="10")
@@ -337,12 +340,14 @@ class APKResignerGUI:
         
         # 提示使用主界面已选的APK
         ttk.Label(local_frame, text="使用主界面选择的APK文件", foreground="gray").grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
-        self.local_apk_path_label = ttk.Label(local_frame, text="当前APK: 未选择", foreground="blue")
+        self.local_apk_path_label = ttk.Label(local_frame, text="当前APK: 未选择", foreground="blue", wraplength=700)
         self.local_apk_path_label.grid(row=1, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
         
         # 绑定主界面apk_path变化，自动更新显示
+        self.local_apk_var = tk.StringVar()
         def update_local_apk_label(*args):
             path = self.apk_path.get()
+            self.local_apk_var.set(path)
             if path:
                 self.local_apk_path_label.config(text=f"当前APK: {path}", foreground="green")
             else:
@@ -393,7 +398,7 @@ class APKResignerGUI:
 • 修改内容+签名：反编译APK，修改内容后重新打包并签名
 • 快速签名替换：不解包，直接去除原签名并重新签名
 • 支持 V1/V2/V3/V4 签名方案"""
-        ttk.Label(help_frame, text=help_text, justify=tk.LEFT, wraplength=500).pack(anchor=tk.W)
+        ttk.Label(help_frame, text=help_text, justify=tk.LEFT, wraplength=650).pack(anchor=tk.W)
     
     def _browse_local_apk(self):
         """浏览本地APK文件（已废弃，使用主界面文件选择）"""
@@ -794,30 +799,56 @@ class APKResignerGUI:
             return
         
         item = self.device_tree.item(selection[0])
-        serial = item['values'][0]
+        values = item['values']
+        serial = values[0]
+        state_text = values[1] if len(values) > 1 else ""
         
+        # 如果已经显示为"已连接"，直接复用（避免select_device重新验证失败）
+        if '已连接' in state_text and self.adb_manager.selected_device == serial:
+            self.selected_device = serial
+            self._adb_log(f"设备 {serial} 已经是连接状态，直接复用", "SUCCESS")
+            self._update_device_ui_connected(serial)
+            return
+        
+        # 尝试标准连接流程
         try:
             self.adb_manager.select_device(serial)
             self.selected_device = serial
-            
-            # 更新状态
-            self.device_status_label.config(text=f"🟢 已连接: {serial}", foreground="green")
-            
-            # 获取设备信息
-            info = self.adb_manager.get_device_info()
-            self.device_info_text.config(state="normal")
-            self.device_info_text.delete(1.0, tk.END)
-            
-            for key, value in info.items():
-                self.device_info_text.insert(tk.END, f"{key}: {value}\n")
-            
-            self.device_info_text.config(state="disabled")
-            self._adb_log(f"已连接设备: {serial}", "SUCCESS")
-            self.status_var.set(f"已连接: {info.get('model', serial)}")
+            self._update_device_ui_connected(serial)
             
         except Exception as e:
-            self._adb_log(f"连接失败: {e}", "ERROR")
-            messagebox.showerror("错误", f"连接设备失败: {e}")
+            self._adb_log(f"标准连接失败，尝试降级处理: {e}", "WARNING")
+            # 降级：直接设置selected_device，不再重新验证
+            try:
+                self.adb_manager.selected_device = serial
+                self.selected_device = serial
+                # 尝试获取设备信息验证
+                info = self.adb_manager.get_device_info()
+                self._update_device_ui_connected(serial, info)
+                self._adb_log(f"降级连接成功: {serial}", "SUCCESS")
+            except Exception as e2:
+                self._adb_log(f"连接失败: {e2}", "ERROR")
+                messagebox.showerror("错误", f"连接设备失败: {e2}")
+
+    def _update_device_ui_connected(self, serial, info=None):
+        """更新设备连接后的UI状态"""
+        if info is None:
+            try:
+                info = self.adb_manager.get_device_info()
+            except Exception:
+                info = {}
+        
+        self.device_status_label.config(text=f"🟢 已连接: {serial}", foreground="green")
+        
+        self.device_info_text.config(state="normal")
+        self.device_info_text.delete(1.0, tk.END)
+        
+        for key, value in info.items():
+            self.device_info_text.insert(tk.END, f"{key}: {value}\n")
+        
+        self.device_info_text.config(state="disabled")
+        self._adb_log(f"已连接设备: {serial}", "SUCCESS")
+        self.status_var.set(f"已连接: {info.get('model', serial)}")
 
     def _disconnect_device(self):
         """断开当前设备"""
