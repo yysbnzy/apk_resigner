@@ -595,15 +595,41 @@ class InstallManager:
     # ═══════════════════════════════════════════════════
     
     def _run_install(self, cmd: List[str]) -> Tuple[int, str, str]:
-        """执行安装命令"""
-        return self._run_adb(cmd)
+        """执行安装命令，自动处理 abb_exec streaming 错误"""
+        return self._run_adb(cmd, is_install=True)
     
-    def _run_adb(self, cmd: List[str]) -> Tuple[int, str, str]:
-        """执行 ADB 命令"""
+    def _run_adb(self, cmd: List[str], is_install: bool = False) -> Tuple[int, str, str]:
+        """执行 ADB 命令，支持安装错误自动降级重试"""
         if hasattr(self.adb, '_run'):
-            return self.adb._run(cmd)
+            result = self.adb._run(cmd)
+            
+            # 安装命令：检测 abb_exec / streaming 错误并自动降级重试
+            if is_install and result[0] != 0:
+                output = result[1] + result[2]
+                if any(err in output for err in ['abb_exec', 'closed', 'streamed', 'incremental']):
+                    # 自动重试：添加 --no-incremental 参数
+                    retry_cmd = self._add_no_incremental(cmd)
+                    if retry_cmd != cmd:
+                        result = self.adb._run(retry_cmd)
+            
+            return result
         else:
             raise InstallError("ADBManager 未提供 _run 方法")
+    
+    def _add_no_incremental(self, cmd: List[str]) -> List[str]:
+        """在安装命令中添加 --no-incremental 参数"""
+        if 'install' not in cmd:
+            return cmd
+        
+        # 查找 install 或 install-multiple 的位置
+        new_cmd = []
+        for i, arg in enumerate(cmd):
+            if arg in ('install', 'install-multiple') and i + 1 < len(cmd):
+                new_cmd.append(arg)
+                new_cmd.append('--no-incremental')
+            else:
+                new_cmd.append(arg)
+        return new_cmd
     
     def __repr__(self) -> str:
         return f"InstallManager(adb={self.adb}, logs={len(self._logs)})"

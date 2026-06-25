@@ -241,17 +241,14 @@ class APKResignerGUI:
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.2.0", font=("Microsoft YaHei", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.2.4", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
         self.btn_help = ttk.Button(main_frame, text="❓ 使用说明", command=self.show_help, width=12)
         self.btn_help.grid(row=0, column=2, pady=(0, 5), sticky=tk.E)
 
-        subtitle = ttk.Label(main_frame, text="内置依赖，无需安装 Android SDK / JDK", font=("Microsoft YaHei", 9), foreground="gray")
-        subtitle.grid(row=1, column=0, columnspan=3, pady=(0, 15))
-
         file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
-        file_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        file_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
         file_frame.columnconfigure(1, weight=1)
 
         ttk.Label(file_frame, text="APK 文件:").grid(row=0, column=0, sticky=tk.W, padx=5)
@@ -556,7 +553,6 @@ class APKResignerGUI:
     def _build_app_tab(self, parent):
         """构建应用列表标签页"""
         parent.columnconfigure(0, weight=1)
-        parent.columnconfigure(1, weight=0)  # 右侧按钮列不扩展
         parent.rowconfigure(2, weight=1)     # 列表区域占满剩余空间
 
         # 顶部控制栏（包含操作按钮，上移）
@@ -579,30 +575,30 @@ class APKResignerGUI:
 
         # 操作按钮（上移到列表上方）
         btn_frame = ttk.Frame(parent)
-        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
 
+        # 左侧：主要操作
         ttk.Button(btn_frame, text="🚀 一键处理", command=self._one_click_process, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="📥 仅导出", command=self._export_only, width=12).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="📋 详情", command=self._show_app_details, width=10).pack(side=tk.LEFT, padx=5)
         
-        # 右侧安装操作按钮（签名完成后启用）
-        install_frame = ttk.LabelFrame(parent, text="安装操作（需先签名）", padding="5")
-        install_frame.grid(row=1, column=1, sticky=(tk.N, tk.S), padx=5, pady=5)
+        # 右侧：安装操作（签名完成后启用）
+        ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.RIGHT, padx=10, fill=tk.Y)
         
-        self.btn_install_overwrite = ttk.Button(install_frame, text="📲 覆盖安装", 
+        self.btn_install_overwrite = ttk.Button(btn_frame, text="📲 覆盖安装", 
                                                  command=self._install_overwrite_signed, 
                                                  width=15, state="disabled")
-        self.btn_install_overwrite.pack(pady=3)
+        self.btn_install_overwrite.pack(side=tk.RIGHT, padx=5)
         
-        self.btn_install_uninstall = ttk.Button(install_frame, text="🔄 卸载后安装", 
+        self.btn_install_uninstall = ttk.Button(btn_frame, text="🔄 卸载后安装", 
                                                  command=self._install_uninstall_signed, 
                                                  width=15, state="disabled")
-        self.btn_install_uninstall.pack(pady=3)
+        self.btn_install_uninstall.pack(side=tk.RIGHT, padx=5)
         
-        self.btn_export_signed = ttk.Button(install_frame, text="💾 导出签名APK", 
+        self.btn_export_signed = ttk.Button(btn_frame, text="💾 导出签名APK", 
                                              command=self._export_signed_apk, 
                                              width=15, state="disabled")
-        self.btn_export_signed.pack(pady=3)
+        self.btn_export_signed.pack(side=tk.RIGHT, padx=5)
         
         # 当前签名后的APK路径
         self.signed_apk_path = None
