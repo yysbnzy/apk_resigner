@@ -32,6 +32,14 @@ try:
 except ImportError:
     ADB_AVAILABLE = False
 
+# 新增证书扫描器导入
+try:
+    from cert_scanner import CertScanner, DeviceCertScanner, APKCertInfo, DeviceAppCertInfo, CRYPTO_AVAILABLE as CERT_CRYPTO_AVAILABLE
+    CERT_SCANNER_AVAILABLE = True
+except ImportError:
+    CERT_SCANNER_AVAILABLE = False
+    CERT_CRYPTO_AVAILABLE = False
+
 # Lazy import pure_python_sign to avoid cryptography dependency at startup
 try:
     from pure_python_sign import PurePythonAPKSigner, CRYPTO_AVAILABLE
@@ -162,17 +170,17 @@ class ToolManager:
         lines = ["工具检测状态:"]
         for tool, path in sorted(self.tool_paths.items()):
             source = "内置" if self.tools_dir in Path(path).parents or self.tools_dir == Path(path).parent else "系统"
-            lines.append(f"  ✓ {tool}: {source} ({Path(path).name})")
+            lines.append(f"  OK {tool}: {source} ({Path(path).name})")
         missing = self.check_all()
         if missing:
-            lines.append(f"\n  ✗ 缺失: {', '.join(missing)}")
+            lines.append(f"\n  X 缺失: {', '.join(missing)}")
         return '\n'.join(lines)
 
 
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 v2.2.1")
+        self.root.title("APK 签名替换工具 v2.3.0")
         self.root.geometry("900x800")
         self.root.minsize(800, 700)
 
@@ -206,6 +214,7 @@ class APKResignerGUI:
         self.selected_device = None
         self.selected_package = tk.StringVar()
         self.scanned_packages = []  # 扫描到的应用列表
+        self._error_dialog_open = False
         self._init_adb_modules()
 
         self.build_ui()
@@ -213,7 +222,7 @@ class APKResignerGUI:
 
         missing = self.tools.check_all()
         if missing:
-            self.log(f"\n⚠️ 缺少必需工具: {', '.join(missing)}", "WARNING")
+            self.log(f"\n警告: 缺少必需工具: {', '.join(missing)}", "WARNING")
             self.log("纯 Python 模式已启用：V1-only 签名可用，无需 JDK/Android SDK", "INFO")
             self.pure_python_mode = True
             self.status_var.set(f"纯 Python 模式 (缺少: {', '.join(missing)})")
@@ -235,16 +244,40 @@ class APKResignerGUI:
             print(f"ADB 模块初始化失败: {e}")
 
     def build_ui(self):
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        """构建UI - 顶级页签: APK签名工具 / 证书扫描"""
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        
+        # 创建顶级Notebook
+        self.top_notebook = ttk.Notebook(self.root)
+        self.top_notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # ========== 第一页: APK签名工具 ==========
+        apk_tool_tab = ttk.Frame(self.top_notebook, padding="10")
+        self.top_notebook.add(apk_tool_tab, text="APK签名工具")
+        self._build_apk_tool_tab(apk_tool_tab)
+        
+        # ========== 第二页: 证书扫描 ==========
+        cert_scanner_tab = ttk.Frame(self.top_notebook, padding="10")
+        self.top_notebook.add(cert_scanner_tab, text="证书扫描")
+        self._build_cert_scanner_tab(cert_scanner_tab)
+        
+        # 绑定顶级页签切换事件
+        self.top_notebook.bind("<<NotebookTabChanged>>", self._on_top_notebook_changed)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.2.4", font=("Microsoft YaHei", 16, "bold"))
+    def _build_apk_tool_tab(self, parent):
+        """构建APK签名工具页（原有功能）"""
+        main_frame = ttk.Frame(parent, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+        main_frame.rowconfigure(6, weight=1)
+
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.0", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
-        self.btn_help = ttk.Button(main_frame, text="❓ 使用说明", command=self.show_help, width=12)
+        self.btn_help = ttk.Button(main_frame, text="使用说明", command=self.show_help, width=12)
         self.btn_help.grid(row=0, column=2, pady=(0, 5), sticky=tk.E)
 
         file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
@@ -272,17 +305,30 @@ class APKResignerGUI:
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
         status_bar.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        # Notebook 放在 row=6，与状态栏相邻，分配剩余空间
-        main_frame.rowconfigure(6, weight=1)
-
-        # ────────────────────────────────────────
-        # 新增 ADB Notebook 标签页
-        # ────────────────────────────────────────
+        # ADB Notebook 标签页
         if ADB_AVAILABLE:
             self._build_adb_notebook(main_frame, 6)
         else:
-            # ADB不可用时的提示
             ttk.Label(main_frame, text="ADB模块未加载", foreground="gray").grid(row=6, column=0, columnspan=3, pady=10)
+
+    def _build_cert_scanner_tab(self, parent):
+        """构建证书扫描页（含两个子页签）"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        
+        # 子Notebook
+        cert_notebook = ttk.Notebook(parent)
+        cert_notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 子页签1: APK证书扫描
+        apk_cert_tab = ttk.Frame(cert_notebook, padding="10")
+        cert_notebook.add(apk_cert_tab, text="APK证书扫描")
+        self._build_apk_cert_scanner_ui(apk_cert_tab)
+        
+        # 子页签2: 车机证书扫描
+        device_cert_tab = ttk.Frame(cert_notebook, padding="10")
+        cert_notebook.add(device_cert_tab, text="车机证书扫描")
+        self._build_device_cert_scanner_ui(device_cert_tab)
 
     def _build_adb_notebook(self, main_frame, row=8):
         """构建 ADB 相关 Notebook 标签页"""
@@ -293,27 +339,27 @@ class APKResignerGUI:
 
         # Tab 5: 本地签名（移到最前面）
         config_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(config_tab, text="📝 本地APK签名")
+        notebook.add(config_tab, text="本地APK签名")
         self._build_config_tab(config_tab)
 
         # Tab 1: 设备连接
         device_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(device_tab, text="📱 ADB设备")
+        notebook.add(device_tab, text="ADB设备")
         self._build_device_tab(device_tab)
 
         # Tab 2: 应用列表
         app_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(app_tab, text="📦 应用列表")
+        notebook.add(app_tab, text="应用列表")
         self._build_app_tab(app_tab)
 
         # Tab 3: 备份还原
         backup_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(backup_tab, text="💾 备份还原")
+        notebook.add(backup_tab, text="备份还原")
         self._build_backup_tab(backup_tab)
 
         # Tab 4: 操作日志（扩展现有日志）
         log_tab = ttk.Frame(notebook, padding="10")
-        notebook.add(log_tab, text="📝 ADB日志")
+        notebook.add(log_tab, text="ADB日志")
         self._build_adb_log_tab(log_tab)
         
         # 保存 notebook 引用并绑定页签切换事件
@@ -372,10 +418,10 @@ class APKResignerGUI:
         btn_frame = ttk.Frame(local_frame)
         btn_frame.grid(row=5, column=0, columnspan=3, pady=10)
         
-        ttk.Button(btn_frame, text="🔧 修改内容+签名", 
+        ttk.Button(btn_frame, text="修改内容+签名", 
                    command=lambda: self._local_full_process(), 
                    width=20).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="⚡ 快速签名替换", 
+        ttk.Button(btn_frame, text="快速 快速签名替换", 
                    command=lambda: self._local_quick_sign(), 
                    width=20).pack(side=tk.LEFT, padx=5)
         
@@ -383,10 +429,10 @@ class APKResignerGUI:
         tools_frame = ttk.LabelFrame(main_container, text="签名工具", padding="10")
         tools_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
         
-        ttk.Button(tools_frame, text="🔍 验证签名", 
+        ttk.Button(tools_frame, text="验证签名", 
                    command=self._verify_apk_signature, 
                    width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(tools_frame, text="📊 签名对比", 
+        ttk.Button(tools_frame, text="签名对比", 
                    command=self._compare_signatures, 
                    width=15).pack(side=tk.LEFT, padx=5)
         
@@ -467,7 +513,7 @@ class APKResignerGUI:
             )
             
             if final_apk and Path(final_apk).exists():
-                self.log(f"[✓] 快速签名替换完成: {final_apk}", "SUCCESS")
+                self.log(f"[OK] 快速签名替换完成: {final_apk}", "SUCCESS")
                 self.status_var.set(f"快速签名替换完成: {Path(final_apk).name}")
                 
                 # 显示结果对话框
@@ -479,11 +525,11 @@ class APKResignerGUI:
                     f"文件位置: {final_apk}"
                 )
             else:
-                self.log("[✗] 快速签名替换失败", "ERROR")
+                self.log("[FAIL] 快速签名替换失败", "ERROR")
                 self._show_error_dialog("错误", "快速签名替换失败，请检查日志")
                 
         except Exception as e:
-            self.log(f"[✗] 快速签名替换异常: {e}", "ERROR")
+            self.log(f"[FAIL] 快速签名替换异常: {e}", "ERROR")
             self._show_error_dialog("错误", f"快速签名替换失败: {e}")
         finally:
             self.progress.stop()
@@ -731,7 +777,7 @@ class APKResignerGUI:
         current_tab = notebook.tab(notebook.select(), "text")
         
         # 切换到备份还原页签时自动刷新列表
-        if current_tab == "💾 备份还原":
+        if current_tab == "备份还原":
             self._refresh_backups()
 
     def _do_adb_log(self, timestamp, message, level):
@@ -840,7 +886,7 @@ class APKResignerGUI:
                             self.device_tree.see(item_id)
                             break
                     
-                    self._adb_log(f"✅ 已自动连接: {first_ready_device.display_name}")
+                    self._adb_log(f"已连接 已自动连接: {first_ready_device.display_name}")
                     
                 except Exception as e:
                     self._adb_log(f"自动连接失败: {e}", "WARNING")
@@ -907,6 +953,9 @@ class APKResignerGUI:
         self.device_info_text.config(state="disabled")
         self._adb_log(f"已连接设备: {serial}", "SUCCESS")
         self.status_var.set(f"已连接: {info.get('model', serial)}")
+        
+        # 同步更新证书扫描页的设备状态
+        self._cert_update_root_device_status()
 
     def _disconnect_device(self):
         """断开当前设备"""
@@ -922,6 +971,18 @@ class APKResignerGUI:
         
         self._adb_log("已断开设备连接")
         self.status_var.set("就绪")
+        
+        # 同步更新证书扫描页的设备状态
+        self._cert_update_root_device_status()
+
+    def _on_top_notebook_changed(self, event):
+        """顶级页签切换事件"""
+        notebook = event.widget
+        current_tab = notebook.tab(notebook.select(), "text")
+        
+        # 切换到证书扫描页时更新设备状态
+        if current_tab == "证书扫描":
+            self._cert_update_root_device_status()
 
     # ────────────────────────────────────────
     # ADB 应用操作
@@ -1053,16 +1114,16 @@ class APKResignerGUI:
                 self._adb_log(f"导出失败: {export_result.error}", "ERROR")
                 return
             
-            self._adb_log(f"  ✓ 导出成功: {export_result.base_apk}", "SUCCESS")
+            self._adb_log(f"  OK 导出成功: {export_result.base_apk}", "SUCCESS")
             
             # 2. 自动备份
             self._adb_log(f"[2/4] 创建备份...")
             device_info = self.adb_manager.get_device_info()
             backup_result = self.backup_manager.create_backup_from_export(export_result, device_info)
             if backup_result.success:
-                self._adb_log(f"  ✓ 备份完成: {backup_result.backup_dir}", "SUCCESS")
+                self._adb_log(f"  OK 备份完成: {backup_result.backup_dir}", "SUCCESS")
             else:
-                self._adb_log(f"  ⚠️ 备份失败: {backup_result.message}", "WARNING")
+                self._adb_log(f"  警告: 备份失败: {backup_result.message}", "WARNING")
                 # 继续执行签名，不阻塞流程
             
             # 3. 签名（复用现有方法）
@@ -1095,7 +1156,7 @@ class APKResignerGUI:
                 return
             
             resigned_apk = resigned_files[0]
-            self._adb_log(f"  ✓ 签名完成: {resigned_apk}", "SUCCESS")
+            self._adb_log(f"  OK 签名完成: {resigned_apk}", "SUCCESS")
             
             # 保存签名后的APK路径和包名，启用安装按钮
             self.signed_apk_path = resigned_apk
@@ -1180,15 +1241,15 @@ class APKResignerGUI:
             
             # 解析结果
             if result.status == "signature_conflict":
-                self._adb_log(f"  ✓ 签名验证拒绝正常 ({result.code})", "SUCCESS")
+                self._adb_log(f"  OK 签名验证拒绝正常 ({result.code})", "SUCCESS")
                 self.root.after(0, lambda: messagebox.showinfo("验证通过", 
                     "签名不匹配，安装被拒绝。\n\n这是预期行为，说明签名验证机制工作正常。"))
             elif result.status == "success":
-                self._adb_log(f"  ⚠ APK 安装成功，签名验证可能被绕过", "WARNING")
+                self._adb_log(f"  警告: APK 安装成功，签名验证可能被绕过", "WARNING")
                 self.root.after(0, lambda: messagebox.showwarning("异常", 
                     "APK 被成功安装，可能存在签名验证绕过风险！"))
             else:
-                self._adb_log(f"  ✗ 安装失败: {result.message}", "ERROR")
+                self._adb_log(f"  X 安装失败: {result.message}", "ERROR")
                 # 打印原始 ADB 输出到日志，便于调试
                 if result.raw_output:
                     raw_lines = result.raw_output.strip().split('\n')
@@ -1359,7 +1420,7 @@ class APKResignerGUI:
         self.log(f"[+] 检测 APK 签名方案: {apk_path}", "INFO")
         cmd = self.tools.get_cmd('apksigner')
         if not cmd:
-            self.log("  ⚠ apksigner 不可用，使用默认方案 v2+v3+v4", "WARNING")
+            self.log("  警告: apksigner 不可用，使用默认方案 v2+v3+v4", "WARNING")
             self.detected_scheme.set("v2+v3+v4")
             self.has_v1 = False
             self.has_v2 = True
@@ -1372,7 +1433,7 @@ class APKResignerGUI:
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            self.log(f"  ⚠ 检测失败: {result.stderr}", "WARNING")
+            self.log(f"  警告: 检测失败: {result.stderr}", "WARNING")
             self.detected_scheme.set("v2+v3+v4")
             self.has_v1 = False
             self.has_v2 = True
@@ -1406,7 +1467,7 @@ class APKResignerGUI:
         if self.has_v4: parts.append("V4")
         sig_text = "+".join(parts) if parts else "无签名"
         self.scheme_label.config(text=f"检测到签名: {sig_text} (使用: {scheme})", foreground="green")
-        self.log(f"  ✓ 检测到签名方案: {sig_text}", "SUCCESS")
+        self.log(f"  OK 检测到签名方案: {sig_text}", "SUCCESS")
 
     def browse_apk(self):
         path = filedialog.askopenfilename(title="选择 APK 文件", filetypes=[("APK 文件", "*.apk"), ("所有文件", "*.*")])
@@ -1469,7 +1530,7 @@ class APKResignerGUI:
         else:
             keystore = Path(self.keystore_path.get())
             if not keystore.exists():
-                self.log("❌ 密钥库不存在", "ERROR")
+                self.log("错误: 密钥库不存在", "ERROR")
                 raise RuntimeError("密钥库不存在")
             return keystore
 
@@ -1535,7 +1596,7 @@ class APKResignerGUI:
         path.parent.mkdir(parents=True, exist_ok=True)
         cmd = self.tools.get_cmd('keytool')
         if not cmd:
-            self.log("❌ keytool 不可用", "ERROR")
+            self.log("错误: keytool 不可用", "ERROR")
             raise RuntimeError("keytool 不可用")
         self.log(f"  使用: {cmd[0]}", "INFO")
         cmd += [
@@ -1551,9 +1612,9 @@ class APKResignerGUI:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and path.exists():
-            self.log(f"  ✓ 密钥库生成成功", "SUCCESS")
+            self.log(f"  OK 密钥库生成成功", "SUCCESS")
         else:
-            self.log(f"  ✗ 密钥库生成失败: rc={result.returncode}", "ERROR")
+            self.log(f"  X 密钥库生成失败: rc={result.returncode}", "ERROR")
             if result.stderr:
                 self.log(f"  stderr: {result.stderr}", "ERROR")
             if result.stdout:
@@ -1569,7 +1630,7 @@ class APKResignerGUI:
         out_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(apk, 'r') as zf:
             zf.extractall(out_dir)
-        self.log(f"  ✓ 解压完成", "SUCCESS")
+        self.log(f"  OK 解压完成", "SUCCESS")
 
     def _rezip_apk(self, source_dir, output_apk):
         self.log(f"[+] 重新打包 APK...")
@@ -1579,7 +1640,7 @@ class APKResignerGUI:
                     file_path = Path(root) / file
                     arcname = str(file_path.relative_to(source_dir))
                     zf.write(file_path, arcname)
-        self.log(f"  ✓ 打包完成", "SUCCESS")
+        self.log(f"  OK 打包完成", "SUCCESS")
 
     def _zipalign(self, input_apk, output_apk):
         self.log(f"[+] zipalign 对齐...")
@@ -1589,7 +1650,7 @@ class APKResignerGUI:
         cmd += ['-p', '-f', '-v', '4', str(input_apk), str(output_apk)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
-            self.log(f"  ✓ 对齐完成", "SUCCESS")
+            self.log(f"  OK 对齐完成", "SUCCESS")
         else:
             raise RuntimeError(f"zipalign 失败: {result.stderr}")
 
@@ -1710,16 +1771,16 @@ class APKResignerGUI:
             with open(path, 'rb') as f:
                 md5 = hashlib.md5(f.read()).hexdigest()
             self.log(f"  {label}: {md5}", "INFO")
-        self.log(f"\n⚠️ 签名已替换，完整性校验应当失败！", "WARNING")
+        self.log(f"\n警告: 签名已替换，完整性校验应当失败！", "WARNING")
 
     def show_help(self):
         help_text = """APK 签名替换工具 - 使用说明
 
 ADB 模块：
-📱 设备连接 - 连接安卓设备，查看设备信息
-📦 应用列表 - 扫描车机应用，一键导出+签名
-💾 备份还原 - 创建备份，随时还原
-📝 ADB日志 - 查看操作日志和签名结果
+设备连接 - 连接安卓设备，查看设备信息
+应用列表 - 扫描车机应用，一键导出+签名
+备份还原 - 创建备份，随时还原
+ADB日志 - 查看操作日志和签名结果
 
 测试方法：
 1. 连接设备 → 扫描应用 → 选择应用
@@ -1732,6 +1793,658 @@ ADB 模块：
 注意：签名后的APK无法安装是预期行为，用于测试校验机制。
         """
         messagebox.showinfo("使用说明", help_text)
+
+    # ═══════════════════════════════════════════════════
+    # 证书扫描页 UI
+    # ═══════════════════════════════════════════════════
+
+    def _build_apk_cert_scanner_ui(self, parent):
+        """构建APK证书扫描子页签"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+        
+        # 初始化证书扫描器
+        self.cert_scanner = None
+        self.apk_cert_results = []  # APK证书扫描结果列表
+        self.selected_apk_certs = []  # 选中的APK（用于对比）
+        
+        if CERT_SCANNER_AVAILABLE and CERT_CRYPTO_AVAILABLE:
+            self.cert_scanner = CertScanner(str(self.work_dir / "cert_scan"))
+        
+        # ── 工具栏 ──
+        toolbar = ttk.Frame(parent)
+        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(toolbar, text="选择APK", command=self._cert_select_apk, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="选择文件夹", command=self._cert_select_folder, width=13).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="刷新列表", command=self._cert_refresh_apk_list, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="清空", command=self._cert_clear_apk, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        ttk.Button(toolbar, text="导出CSV", command=self._cert_export_csv, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="导出TXT", command=self._cert_export_txt, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="对比选中", command=self._cert_compare_apk, width=12).pack(side=tk.LEFT, padx=10)
+        
+        # 依赖状态提示
+        if not self.cert_scanner:
+            ttk.Label(toolbar, text="警告: 需要 cryptography 库: pip install cryptography", foreground="red").pack(side=tk.RIGHT, padx=5)
+        
+        # ── 搜索栏 ──
+        search_frame = ttk.Frame(parent)
+        search_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
+        ttk.Label(search_frame, text="搜索:").pack(side=tk.LEFT, padx=5)
+        self.cert_apk_search_var = tk.StringVar()
+        self.cert_apk_search_var.trace_add("write", lambda *args: self._cert_filter_apk_list())
+        ttk.Entry(search_frame, textvariable=self.cert_apk_search_var, width=30).pack(side=tk.LEFT, padx=5)
+        ttk.Label(search_frame, text="提示: 选中两个APK后点击对比").pack(side=tk.RIGHT, padx=10)
+        
+        # ── 左右分栏 ──
+        paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        paned.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # 左侧: 证书列表
+        left_frame = ttk.LabelFrame(paned, text="APK证书列表", padding="5")
+        paned.add(left_frame, weight=2)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
+        
+        columns = ('select', 'apk_name', 'scheme', 'sha1', 'status', 'valid_until')
+        self.apk_cert_tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=12)
+        self.apk_cert_tree.heading('select', text='选择')
+        self.apk_cert_tree.heading('apk_name', text='APK文件名')
+        self.apk_cert_tree.heading('scheme', text='签名方案')
+        self.apk_cert_tree.heading('sha1', text='SHA1(前16位)')
+        self.apk_cert_tree.heading('status', text='状态')
+        self.apk_cert_tree.heading('valid_until', text='有效期至')
+        self.apk_cert_tree.column('select', width=40, anchor='center')
+        self.apk_cert_tree.column('apk_name', width=180)
+        self.apk_cert_tree.column('scheme', width=80)
+        self.apk_cert_tree.column('sha1', width=130)
+        self.apk_cert_tree.column('status', width=80)
+        self.apk_cert_tree.column('valid_until', width=100)
+        self.apk_cert_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.apk_cert_tree.bind("<<TreeviewSelect>>", self._cert_on_apk_select)
+        
+        # 绑定复选框点击
+        self.apk_cert_tree.bind("<Button-1>", self._cert_on_apk_tree_click)
+        
+        vsb = ttk.Scrollbar(left_frame, orient="vertical", command=self.apk_cert_tree.yview)
+        vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.apk_cert_tree.configure(yscrollcommand=vsb.set)
+        
+        # 右侧: 证书详情
+        right_frame = ttk.LabelFrame(paned, text="证书详情", padding="10")
+        paned.add(right_frame, weight=3)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=1)
+        
+        self.cert_detail_text = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=("Consolas", 9), height=20)
+        self.cert_detail_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.cert_detail_text.insert(tk.END, "请扫描APK文件查看证书详情\n")
+        self.cert_detail_text.config(state="disabled")
+        
+        # 底部统计栏
+        self.cert_apk_status = tk.StringVar(value="就绪 | 已扫描: 0")
+        status_bar = ttk.Label(parent, textvariable=self.cert_apk_status, relief=tk.SUNKEN)
+        status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+
+    def _build_device_cert_scanner_ui(self, parent):
+        """构建车机根证书扫描子页签"""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(3, weight=1)
+        
+        self.root_cert_results = []  # 根证书扫描结果
+        
+        # ── 工具栏 ──
+        toolbar = ttk.Frame(parent)
+        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        self.root_device_status_label = ttk.Label(toolbar, text="设备状态: 未连接 未连接", font=("Microsoft YaHei", 10, "bold"), foreground="red")
+        self.root_device_status_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        
+        ttk.Button(toolbar, text="扫描根证书", command=self._cert_scan_root_certs, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="刷新", command=self._cert_refresh_root_certs, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        ttk.Button(toolbar, text="导出CSV", command=self._cert_export_root_csv, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="导出TXT", command=self._cert_export_root_txt, width=12).pack(side=tk.LEFT, padx=2)
+        
+        # 依赖状态提示
+        if not CERT_CRYPTO_AVAILABLE:
+            ttk.Label(toolbar, text="警告: 需要 cryptography 库: pip install cryptography", foreground="red").pack(side=tk.RIGHT, padx=5)
+        
+        # ── 路径提示 ──
+        path_frame = ttk.Frame(parent)
+        path_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
+        ttk.Label(path_frame, text="扫描方式:", foreground="gray").pack(side=tk.LEFT, padx=5)
+        ttk.Label(path_frame, text="从 /system /vendor /data/misc/keychain /etc 递归搜索 .0/.pem/.crt", foreground="blue").pack(side=tk.LEFT, padx=5)
+        
+        # ── 筛选栏 ──
+        filter_frame = ttk.Frame(parent)
+        filter_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
+        
+        ttk.Label(filter_frame, text="筛选:").pack(side=tk.LEFT, padx=5)
+        self.root_filter_var = tk.StringVar(value="全部")
+        filter_combo = ttk.Combobox(filter_frame, textvariable=self.root_filter_var, 
+                                    values=["全部", "即将过期", "已过期"], 
+                                    state="readonly", width=12)
+        filter_combo.pack(side=tk.LEFT, padx=2)
+        self.root_filter_var.trace_add("write", lambda *args: self._cert_refresh_root_tree())
+        
+        ttk.Label(filter_frame, text="搜索:").pack(side=tk.LEFT, padx=(20, 5))
+        self.root_search_var = tk.StringVar()
+        self.root_search_var.trace_add("write", lambda *args: self._cert_refresh_root_tree())
+        ttk.Entry(filter_frame, textvariable=self.root_search_var, width=30).pack(side=tk.LEFT, padx=5)
+        
+        # ── 统计栏 ──
+        self.root_cert_stats = tk.StringVar(value="总计: 0 | 警告:即将过期: 0 | 错误:已过期: 0 | 已连接正常: 0")
+        stats_label = ttk.Label(parent, textvariable=self.root_cert_stats, font=("Microsoft YaHei", 9))
+        stats_label.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
+        
+        # ── 左右分栏 ──
+        paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        paned.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # 左侧: 根证书列表
+        left_frame = ttk.LabelFrame(paned, text="系统根证书列表", padding="5")
+        paned.add(left_frame, weight=2)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
+        
+        columns = ('filename', 'subject', 'issuer', 'sha1', 'status', 'valid_until')
+        self.root_cert_tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=12)
+        self.root_cert_tree.heading('filename', text='文件名')
+        self.root_cert_tree.heading('subject', text='证书主题')
+        self.root_cert_tree.heading('issuer', text='颁发者')
+        self.root_cert_tree.heading('sha1', text='SHA1(前16位)')
+        self.root_cert_tree.heading('status', text='状态')
+        self.root_cert_tree.heading('valid_until', text='有效期至')
+        self.root_cert_tree.column('filename', width=100)
+        self.root_cert_tree.column('subject', width=150)
+        self.root_cert_tree.column('issuer', width=150)
+        self.root_cert_tree.column('sha1', width=130)
+        self.root_cert_tree.column('status', width=60)
+        self.root_cert_tree.column('valid_until', width=100)
+        self.root_cert_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.root_cert_tree.bind("<<TreeviewSelect>>", self._cert_on_root_select)
+        
+        vsb = ttk.Scrollbar(left_frame, orient="vertical", command=self.root_cert_tree.yview)
+        vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.root_cert_tree.configure(yscrollcommand=vsb.set)
+        
+        # 右侧: 证书详情
+        right_frame = ttk.LabelFrame(paned, text="证书详情", padding="10")
+        paned.add(right_frame, weight=3)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=1)
+        
+        self.root_cert_detail = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=("Consolas", 9), height=20)
+        self.root_cert_detail.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.root_cert_detail.insert(tk.END, "连接ADB设备后点击「扫描根证书」查看系统CA证书详情\n")
+        self.root_cert_detail.config(state="disabled")
+        
+        # 底部状态栏
+        self.root_cert_status = tk.StringVar(value="就绪 | 请先连接ADB设备")
+        status_bar = ttk.Label(parent, textvariable=self.root_cert_status, relief=tk.SUNKEN)
+        status_bar.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=5)
+
+    # ═══════════════════════════════════════════════════
+    # APK证书扫描 - 事件处理
+    # ═══════════════════════════════════════════════════
+
+    def _cert_select_apk(self):
+        """选择APK文件"""
+        paths = filedialog.askopenfilenames(
+            title="选择APK文件",
+            filetypes=[("APK 文件", "*.apk"), ("所有文件", "*.*")]
+        )
+        if paths:
+            self._cert_scan_apk_files(list(paths))
+
+    def _cert_select_folder(self):
+        """选择文件夹批量扫描"""
+        path = filedialog.askdirectory(title="选择包含APK的文件夹")
+        if path and self.cert_scanner:
+            self.cert_apk_status.set("正在扫描文件夹...")
+            self.root.update()
+            results = self.cert_scanner.scan_directory(path)
+            self.apk_cert_results.extend(results)
+            self._cert_refresh_apk_tree()
+            self.cert_apk_status.set(f"扫描完成 | 已扫描: {len(self.apk_cert_results)}")
+
+    def _cert_scan_apk_files(self, paths):
+        """扫描APK文件列表"""
+        if not self.cert_scanner:
+            messagebox.showwarning("提示", "证书扫描器不可用，请安装 cryptography 库:\npip install cryptography")
+            return
+        
+        self.cert_apk_status.set(f"正在扫描 {len(paths)} 个APK...")
+        self.root.update()
+        
+        for path in paths:
+            result = self.cert_scanner.scan_apk(path)
+            self.apk_cert_results.append(result)
+        
+        self._cert_refresh_apk_tree()
+        self.cert_apk_status.set(f"扫描完成 | 已扫描: {len(self.apk_cert_results)}")
+
+    def _cert_refresh_apk_tree(self):
+        """刷新APK证书列表显示"""
+        self.apk_cert_tree.delete(*self.apk_cert_tree.get_children())
+        
+        keyword = self.cert_apk_search_var.get().lower()
+        
+        for i, info in enumerate(self.apk_cert_results):
+            if keyword and keyword not in info.apk_name.lower():
+                continue
+            
+            cert = info.primary_cert
+            if cert:
+                values = (
+                    "[ ]",  # 复选框
+                    info.apk_name,
+                    info.signing_scheme,
+                    cert.sha1[:19] if len(cert.sha1) > 19 else cert.sha1,  # 前16位+冒号
+                    cert.status_text,
+                    cert.not_after.strftime("%Y-%m-%d") if cert.not_after else "N/A"
+                )
+                tags = ("expired",) if cert.is_expired else ("expiring_soon",) if cert.is_expiring_soon() else ("normal",)
+            else:
+                values = ("[ ]", info.apk_name, info.signing_scheme, "N/A", "无证书", "N/A")
+                tags = ("no_cert",)
+            
+            self.apk_cert_tree.insert('', tk.END, values=values, tags=tags, iid=str(i))
+        
+        # 设置标签颜色
+        self.apk_cert_tree.tag_configure("expired", foreground="red")
+        self.apk_cert_tree.tag_configure("expiring_soon", foreground="orange")
+        self.apk_cert_tree.tag_configure("normal", foreground="green")
+        self.apk_cert_tree.tag_configure("no_cert", foreground="gray")
+
+    def _cert_filter_apk_list(self):
+        """过滤APK列表"""
+        self._cert_refresh_apk_tree()
+
+    def _cert_on_apk_tree_click(self, event):
+        """处理APK列表点击事件（复选框）"""
+        region = self.apk_cert_tree.identify_region(event.x, event.y)
+        if region == "cell":
+            column = self.apk_cert_tree.identify_column(event.x)
+            if column == "#1":  # 第一列是选择列
+                item = self.apk_cert_tree.identify_row(event.y)
+                if item:
+                    values = list(self.apk_cert_tree.item(item, 'values'))
+                    values[0] = "[X]" if values[0] == "[ ]" else "[ ]"
+                    self.apk_cert_tree.item(item, values=tuple(values))
+
+    def _cert_on_apk_select(self, event):
+        """选中APK显示详情"""
+        selection = self.apk_cert_tree.selection()
+        if not selection:
+            return
+        
+        idx = int(selection[0])
+        if idx >= len(self.apk_cert_results):
+            return
+        
+        info = self.apk_cert_results[idx]
+        self._cert_show_apk_detail(info)
+
+    def _cert_show_apk_detail(self, info):
+        """显示APK证书详情"""
+        self.cert_detail_text.config(state="normal")
+        self.cert_detail_text.delete(1.0, tk.END)
+        
+        text = f"APK文件: {info.apk_name}\n"
+        text += f"路径 路径: {info.apk_path}\n"
+        text += f"签名 签名方案: {info.signing_scheme}\n"
+        text += f"证书数量: {info.cert_count}\n\n"
+        
+        if info.error:
+            text += f"警告: 错误: {info.error}\n"
+        
+        for cert in info.certificates:
+            text += f"{'─' * 50}\n"
+            text += f"[证书 #{cert.index}]\n"
+            text += f"  SHA1:    {cert.sha1}\n"
+            text += f"  SHA256:  {cert.sha256}\n"
+            text += f"  MD5:     {cert.md5}\n"
+            text += f"  颁发者:  {cert.issuer}\n"
+            text += f"  主题:    {cert.subject}\n"
+            text += f"  序列号:  {cert.serial_number}\n"
+            text += f"  有效期:  {cert.not_before.strftime('%Y-%m-%d') if cert.not_before else '?'} ~ {cert.not_after.strftime('%Y-%m-%d') if cert.not_after else '?'}\n"
+            text += f"  状态:    {cert.status_text} {cert.status_icon}\n"
+            text += f"  公钥算法: {cert.public_key_algorithm}\n"
+            text += f"  签名算法: {cert.signature_algorithm}\n\n"
+        
+        self.cert_detail_text.insert(tk.END, text)
+        self.cert_detail_text.config(state="disabled")
+
+    def _cert_compare_apk(self):
+        """对比两个选中的APK证书"""
+        selected = []
+        for item in self.apk_cert_tree.get_children():
+            values = self.apk_cert_tree.item(item, 'values')
+            if values and values[0] == "[X]":
+                selected.append(int(item))
+        
+        if len(selected) != 2:
+            messagebox.showwarning("提示", "请选中两个APK进行对比\n(点击第一列的复选框)")
+            return
+        
+        info1 = self.apk_cert_results[selected[0]]
+        info2 = self.apk_cert_results[selected[1]]
+        
+        result = self.cert_scanner.compare_apks(info1, info2)
+        
+        detail_text = "\n".join(result["details"])
+        if result["same_signature"]:
+            messagebox.showinfo("对比结果", f"已连接 两个APK证书完全相同\n\n{detail_text}")
+        else:
+            messagebox.showinfo("对比结果", f"错误: 两个APK证书不同\n\n{detail_text}")
+
+    def _cert_refresh_apk_list(self):
+        """刷新APK证书列表（重新扫描已选中的APK）"""
+        if not self.apk_cert_results:
+            messagebox.showinfo("提示", "列表为空，请先选择APK文件")
+            return
+        
+        self.cert_apk_status.set("正在重新扫描...")
+        self.root.update()
+        
+        # 重新扫描所有已有结果
+        new_results = []
+        for info in self.apk_cert_results:
+            if Path(info.apk_path).exists():
+                result = self.cert_scanner.scan_apk(info.apk_path)
+                new_results.append(result)
+            else:
+                new_results.append(info)
+        
+        self.apk_cert_results = new_results
+        self._cert_refresh_apk_tree()
+        self.cert_apk_status.set(f"刷新完成 | 已扫描: {len(self.apk_cert_results)}")
+
+    def _cert_clear_apk(self):
+        """清空APK列表"""
+        self.apk_cert_results = []
+        self.apk_cert_tree.delete(*self.apk_cert_tree.get_children())
+        self.cert_apk_status.set("已清空 | 已扫描: 0")
+
+    def _cert_export_csv(self):
+        """导出APK证书CSV"""
+        if not self.apk_cert_results:
+            messagebox.showwarning("提示", "列表为空")
+            return
+        path = filedialog.asksaveasfilename(
+            title="导出CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV 文件", "*.csv")]
+        )
+        if path and self.cert_scanner:
+            self.cert_scanner.export_to_csv(self.apk_cert_results, path)
+            messagebox.showinfo("导出成功", f"已导出到:\n{path}")
+
+    def _cert_export_txt(self):
+        """导出APK证书TXT"""
+        if not self.apk_cert_results:
+            messagebox.showwarning("提示", "列表为空")
+            return
+        path = filedialog.asksaveasfilename(
+            title="导出TXT",
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt")]
+        )
+        if path and self.cert_scanner:
+            self.cert_scanner.export_to_txt(self.apk_cert_results, path)
+            messagebox.showinfo("导出成功", f"已导出到:\n{path}")
+
+    # ═══════════════════════════════════════════════════
+    # 车机根证书扫描 - 事件处理
+    # ═══════════════════════════════════════════════════
+
+    def _cert_scan_root_certs(self):
+        """扫描设备根证书"""
+        if not self.adb_manager or not self.adb_manager.selected_device:
+            messagebox.showwarning("提示", "请先连接ADB设备\n\n在「APK签名工具」页的「ADB设备」标签中连接设备")
+            return
+        
+        if not CERT_SCANNER_AVAILABLE or not CERT_CRYPTO_AVAILABLE:
+            messagebox.showwarning("提示", "证书扫描器不可用，请安装 cryptography 库:\npip install cryptography")
+            return
+        
+        self._cert_update_root_device_status()
+        self.root_cert_status.set("正在扫描设备根证书...")
+        self.root.update()
+        
+        # 在后台线程扫描
+        thread = threading.Thread(target=self._cert_do_scan_root_certs)
+        thread.daemon = True
+        thread.start()
+
+    def _cert_do_scan_root_certs(self):
+        """后台扫描设备根证书"""
+        try:
+            from cert_scanner import RootCertScanner
+            scanner = RootCertScanner(self.adb_manager)
+            
+            results = scanner.list_root_certs()
+            self.root_cert_results = results
+            
+            self.root.after(0, self._cert_refresh_root_tree)
+            self.root.after(0, lambda: self.root_cert_status.set(
+                f"扫描完成 | 共 {len(results)} 个根证书"
+            ))
+            
+        except Exception as e:
+            self.root.after(0, lambda: self.root_cert_status.set(f"扫描失败: {e}"))
+            self.root.after(0, lambda: messagebox.showerror("错误", f"扫描失败: {e}"))
+
+    def _cert_refresh_root_certs(self):
+        """刷新根证书列表"""
+        self._cert_update_root_device_status()
+        if self.adb_manager and self.adb_manager.selected_device:
+            self._cert_scan_root_certs()
+
+    def _cert_refresh_root_tree(self):
+        """刷新根证书列表显示"""
+        self.root_cert_tree.delete(*self.root_cert_tree.get_children())
+        
+        keyword = self.root_search_var.get().lower()
+        filter_type = self.root_filter_var.get()
+        
+        total = 0
+        expired = 0
+        expiring = 0
+        normal = 0
+        
+        for i, cert in enumerate(self.root_cert_results):
+            total += 1
+            
+            # 统计状态
+            if cert.is_expired:
+                expired += 1
+            elif cert.is_expiring_soon():
+                expiring += 1
+            else:
+                normal += 1
+            
+            # 筛选
+            if filter_type == "已过期" and not cert.is_expired:
+                continue
+            if filter_type == "即将过期" and not cert.is_expiring_soon():
+                continue
+            
+            # 关键词搜索
+            if keyword and keyword not in cert.subject.lower() and keyword not in cert.issuer.lower() and keyword not in cert.sha1.lower():
+                continue
+            
+            # 显示
+            filename = cert.filename if cert.filename else f"{cert.sha1[:8].replace(':', '')}.0"
+            
+            values = (
+                filename,
+                cert.subject[:30] + "..." if len(cert.subject) > 30 else cert.subject,
+                cert.issuer[:30] + "..." if len(cert.issuer) > 30 else cert.issuer,
+                cert.sha1[:19] if len(cert.sha1) > 19 else cert.sha1,
+                cert.status_text,
+                cert.not_after.strftime("%Y-%m-%d") if cert.not_after else "N/A"
+            )
+            tags = ("expired",) if cert.is_expired else ("expiring_soon",) if cert.is_expiring_soon() else ("normal",)
+            
+            self.root_cert_tree.insert('', tk.END, values=values, tags=tags, iid=str(i))
+        
+        # 颜色标签
+        self.root_cert_tree.tag_configure("expired", foreground="red")
+        self.root_cert_tree.tag_configure("expiring_soon", foreground="orange")
+        self.root_cert_tree.tag_configure("normal", foreground="green")
+        
+        # 更新统计
+        total_all = len(self.root_cert_results)
+        expired_all = sum(1 for c in self.root_cert_results if c.is_expired)
+        expiring_all = sum(1 for c in self.root_cert_results if c.is_expiring_soon() and not c.is_expired)
+        normal_all = total_all - expired_all - expiring_all
+        self.root_cert_stats.set(f"总计: {total_all} | 警告:即将过期: {expiring_all} | 错误:已过期: {expired_all} | 已连接正常: {normal_all}")
+
+    def _cert_on_root_select(self, event):
+        """选中根证书显示详情"""
+        selection = self.root_cert_tree.selection()
+        if not selection:
+            return
+        
+        idx = int(selection[0])
+        if idx >= len(self.root_cert_results):
+            return
+        
+        cert = self.root_cert_results[idx]
+        self._cert_show_root_detail(cert)
+
+    def _cert_show_root_detail(self, cert):
+        """显示根证书详情"""
+        self.root_cert_detail.config(state="normal")
+        self.root_cert_detail.delete(1.0, tk.END)
+        
+        text = f"系统根证书 (CA)\n"
+        text += f"{'─' * 50}\n\n"
+        
+        filename = cert.filename if cert.filename else f"{cert.sha1[:8].replace(':', '')}.0"
+        text += f"文件 文件名: {filename}\n"
+        
+        text += f"\n[基本信息]\n"
+        text += f"  主题:    {cert.subject}\n"
+        text += f"  颁发者:  {cert.issuer}\n"
+        text += f"  序列号:  {cert.serial_number}\n\n"
+        
+        text += f"[指纹]\n"
+        text += f"  MD5:     {cert.md5}\n"
+        text += f"  SHA1:    {cert.sha1}\n"
+        text += f"  SHA256:  {cert.sha256}\n\n"
+        
+        text += f"[有效期]\n"
+        text += f"  生效:    {cert.not_before.strftime('%Y-%m-%d') if cert.not_before else 'N/A'}\n"
+        text += f"  过期:    {cert.not_after.strftime('%Y-%m-%d') if cert.not_after else 'N/A'}\n"
+        text += f"  状态:    {cert.status_text} {cert.status_icon}\n\n"
+        
+        text += f"[技术信息]\n"
+        text += f"  签名算法: {cert.signature_algorithm}\n"
+        text += f"  公钥算法: {cert.public_key_algorithm}\n\n"
+        
+        text += f"[证书路径]\n"
+        text += f"  /system/etc/security/cacerts/\n"
+        
+        self.root_cert_detail.insert(tk.END, text)
+        self.root_cert_detail.config(state="disabled")
+
+    def _cert_export_root_csv(self):
+        """导出根证书CSV"""
+        if not self.root_cert_results:
+            messagebox.showwarning("提示", "列表为空，请先扫描根证书")
+            return
+        
+        path = filedialog.asksaveasfilename(
+            title="导出根证书CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV 文件", "*.csv")]
+        )
+        if not path:
+            return
+        
+        import csv
+        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                '文件名', '证书主题', '颁发者', 'SHA1', 'SHA256', '序列号',
+                '生效日期', '过期日期', '状态', '公钥算法', '签名算法'
+            ])
+            for i, cert in enumerate(self.root_cert_results):
+                filename = f"{cert.sha1[:8].replace(':', '')}.0" if cert.sha1 else f"cert_{i}.0"
+                writer.writerow([
+                    filename,
+                    cert.subject,
+                    cert.issuer,
+                    cert.sha1,
+                    cert.sha256,
+                    cert.serial_number,
+                    cert.not_before.strftime('%Y-%m-%d') if cert.not_before else '',
+                    cert.not_after.strftime('%Y-%m-%d') if cert.not_after else '',
+                    cert.status_text,
+                    cert.public_key_algorithm,
+                    cert.signature_algorithm
+                ])
+        messagebox.showinfo("导出成功", f"已导出到:\n{path}")
+
+    def _cert_export_root_txt(self):
+        """导出根证书TXT"""
+        if not self.root_cert_results:
+            messagebox.showwarning("提示", "列表为空，请先扫描根证书")
+            return
+        
+        path = filedialog.asksaveasfilename(
+            title="导出根证书TXT",
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt")]
+        )
+        if not path:
+            return
+        
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("=" * 60 + "\n")
+            f.write("系统根证书 (CA) 扫描报告\n")
+            f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(f"扫描路径: /system/etc/security/cacerts/\n")
+            f.write(f"证书总数: {len(self.root_cert_results)}\n\n")
+            
+            for i, cert in enumerate(self.root_cert_results):
+                filename = f"{cert.sha1[:8].replace(':', '')}.0" if cert.sha1 else f"cert_{i}.0"
+                f.write(f"\n{'─' * 60}\n")
+                f.write(f"[证书 #{i+1}] {filename}\n")
+                f.write(f"  主题:    {cert.subject}\n")
+                f.write(f"  颁发者:  {cert.issuer}\n")
+                f.write(f"  SHA1:    {cert.sha1}\n")
+                f.write(f"  SHA256:  {cert.sha256}\n")
+                f.write(f"  序列号:  {cert.serial_number}\n")
+                f.write(f"  生效:    {cert.not_before.strftime('%Y-%m-%d') if cert.not_before else 'N/A'}\n")
+                f.write(f"  过期:    {cert.not_after.strftime('%Y-%m-%d') if cert.not_after else 'N/A'}\n")
+                f.write(f"  状态:    {cert.status_text} {cert.status_icon}\n")
+                f.write(f"  公钥算法: {cert.public_key_algorithm}\n")
+                f.write(f"  签名算法: {cert.signature_algorithm}\n")
+        messagebox.showinfo("导出成功", f"已导出到:\n{path}")
+
+    def _cert_update_root_device_status(self):
+        """更新根证书页的设备状态显示"""
+        if self.adb_manager and self.adb_manager.selected_device:
+            self.root_device_status_label.config(
+                text=f"设备状态: 已连接 已连接 ({self.adb_manager.selected_device})",
+                foreground="green"
+            )
+            self.root_cert_status.set("设备已连接")
+        else:
+            self.root_device_status_label.config(
+                text="设备状态: 未连接 未连接",
+                foreground="red"
+            )
+            self.root_cert_status.set("设备未连接")
 
 
 def main():
