@@ -215,7 +215,7 @@ class ToolManager:
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 v2.3.0")
+        self.root.title("APK 签名替换工具 v2.3.1")
         self.root.geometry("900x800")
         self.root.minsize(800, 700)
 
@@ -309,7 +309,7 @@ class APKResignerGUI:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(6, weight=1)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.0", font=("Microsoft YaHei", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.1", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
         self.btn_help = ttk.Button(main_frame, text="使用说明", command=self.show_help, width=12)
