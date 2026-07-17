@@ -60,10 +60,45 @@ class ToolManager:
         else:
             self.base_dir = Path(__file__).parent
 
-        self.tools_dir = self.base_dir / "_tools"
+        # 源码运行时兼容：优先脚本同目录，支持在上级目录查找 _tools
+        self.tools_dir = self._find_tools_dir()
         self.java_dir = self.tools_dir / "java" / "bin"
         self.tool_paths = {}
+        # 在GUI日志就绪前用print输出，便于源码运行时排查
+        print(f"[ToolManager] 工具目录: {self.tools_dir}")
+        if not self.tools_dir.exists():
+            print("[ToolManager] 警告: _tools 目录不存在，将回退到系统工具")
         self._detect_tools()
+
+    def _find_tools_dir(self):
+        """查找 _tools 目录，优先内置，回退到系统环境"""
+        candidates = [self.base_dir]
+        # 向上最多搜索 3 层父目录，方便复制/移动项目后仍能定位
+        parent = self.base_dir
+        for _ in range(3):
+            parent = parent.parent
+            candidates.append(parent)
+        # 额外尝试脚本入口所在目录
+        if sys.argv and sys.argv[0]:
+            candidates.append(Path(sys.argv[0]).parent)
+
+        seen = set()
+        for d in candidates:
+            d = d.resolve()
+            if d in seen:
+                continue
+            seen.add(d)
+            tools_dir = d / "_tools"
+            if tools_dir.exists() and tools_dir.is_dir():
+                # 至少包含 java/bin 或 apktool.jar 才认为是有效工具目录
+                if (tools_dir / "java" / "bin" / "java.exe").exists() or \
+                   (tools_dir / "java" / "bin" / "java").exists() or \
+                   (tools_dir / "apktool.jar").exists() or \
+                   (tools_dir / "keytool.exe").exists() or \
+                   (tools_dir / "keytool").exists():
+                    return tools_dir
+        # 默认返回脚本同目录下的 _tools，即使不存在，后续会回退系统工具
+        return self.base_dir / "_tools"
 
     def _detect_tools(self):
         apktool_jar = self.tools_dir / "apktool.jar"

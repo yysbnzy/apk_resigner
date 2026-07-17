@@ -440,6 +440,14 @@ class PortableBuilder:
                 "--hidden-import", "cryptography.x509",
             ]
 
+        # 显式包含证书扫描、ADB 等模块（即使以 try-except 导入也能被打包）
+        cmd += [
+            "--hidden-import", "cert_scanner",
+            "--hidden-import", "adb_manager",
+            "--hidden-import", "backup_manager",
+            "--hidden-import", "install_manager",
+        ]
+
         print(f"  命令: {' '.join(cmd)}")
         print()
 
