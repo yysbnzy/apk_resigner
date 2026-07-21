@@ -541,23 +541,38 @@ class APKResignerGUI:
             v1_only = (scheme == "v1")
             
             # 执行快速签名替换
-            final_apk = replacer.quick_replace(
+            result = replacer.quick_replace(
                 original_apk=apk_path,
                 keystore_path=self.keystore_path.get() if self.keystore_path.get() else None,
                 v1_only=v1_only
             )
             
+            # quick_replace 返回 (final_apk, md5_info)
+            if isinstance(result, tuple) and len(result) == 2:
+                final_apk, md5_info = result
+            else:
+                final_apk = result
+                md5_info = []
+            
             if final_apk and Path(final_apk).exists():
+                # 打印 MD5 对比到 GUI 日志
+                if md5_info:
+                    self.log("[INFO] 签名对比 (MD5):", "INFO")
+                    for line in md5_info:
+                        self.log(line, "INFO")
+                
                 self.log(f"[OK] 快速签名替换完成: {final_apk}", "SUCCESS")
                 self.status_var.set(f"快速签名替换完成: {Path(final_apk).name}")
                 
                 # 显示结果对话框
+                md5_text = "\n".join(md5_info) if md5_info else ""
                 self._show_info_dialog(
                     "完成",
                     f"快速签名替换完成！\n\n"
                     f"原始APK: {apk_path.name}\n"
                     f"新签名APK: {Path(final_apk).name}\n\n"
-                    f"文件位置: {final_apk}"
+                    f"文件位置: {final_apk}\n\n"
+                    f"{md5_text}"
                 )
             else:
                 self.log("[FAIL] 快速签名替换失败", "ERROR")

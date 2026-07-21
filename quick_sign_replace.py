@@ -210,29 +210,32 @@ class QuickSignReplacer:
         if not self.sign_apk(aligned_apk, keystore_path, alias, password, v1_only=v1_only):
             return None
 
-        # 6. 输出最终文件
-        final_apk = self.work_dir / f"resigned_{original_apk.stem}_{timestamp}.apk"
+        # 6. 输出最终文件到 APK 同级目录，方便查找
+        final_apk = original_apk.parent / f"{original_apk.stem}_quick_sign_{timestamp}.apk"
         shutil.copy(aligned_apk, final_apk)
 
         print(f"\n[✓] 快速签名替换完成！")
         print(f"    最终 APK: {final_apk}")
         print(f"    密钥库: {keystore_path}")
 
+        # MD5 对比
+        print(f"\n[+] 签名对比 (MD5):")
+        md5_info = []
+        for label, apk in [("原始", original_apk), ("新签名", final_apk)]:
+            with open(apk, 'rb') as f:
+                md5 = hashlib.md5(f.read()).hexdigest()
+            line = f"    {label}: {md5}"
+            print(line)
+            md5_info.append(line)
+
         if v1_only:
             print(f"\n⚠️  注意：此 APK 仅含 V1 签名")
             print(f"    - Android 5.0-6.0: 可能安装成功")
             print(f"    - Android 7.0+: 会拒绝安装（缺少 v2+ 签名）")
 
-        # 对比信息
-        print(f"\n[+] 签名对比:")
-        for label, apk in [("原始", original_apk), ("新签名", final_apk)]:
-            with open(apk, 'rb') as f:
-                md5 = hashlib.md5(f.read()).hexdigest()
-            print(f"    {label}: {md5}")
-
         print(f"\n[注意] 签名已替换，原完整性校验应当失败！")
 
-        return final_apk
+        return final_apk, md5_info
 
 
 def main():
@@ -268,13 +271,20 @@ def main():
     args = parser.parse_args()
 
     replacer = QuickSignReplacer(args.work_dir)
-    final_apk = replacer.quick_replace(
+    result = replacer.quick_replace(
         args.input,
         args.keystore,
         args.alias,
         args.password,
         v1_only=args.v1_only
     )
+
+    # quick_replace 返回 (final_apk, md5_info)
+    if isinstance(result, tuple) and len(result) == 2:
+        final_apk, md5_info = result
+    else:
+        final_apk = result
+        md5_info = []
 
     if final_apk:
         print(f"\n测试命令:")
