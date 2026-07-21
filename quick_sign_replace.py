@@ -17,9 +17,21 @@ from pathlib import Path
 from datetime import datetime
 
 class QuickSignReplacer:
-    def __init__(self, work_dir="./apk_work"):
+    def __init__(self, work_dir="./apk_work", tool_paths=None):
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(exist_ok=True)
+        self.tool_paths = tool_paths or {}  # 传入 ToolManager 解析的完整路径
+
+    def _get_cmd(self, tool_name):
+        """获取工具的完整命令路径"""
+        path = self.tool_paths.get(tool_name)
+        if path:
+            return [path]
+        # 回退到系统 PATH
+        sys_path = shutil.which(tool_name)
+        if sys_path:
+            return [sys_path]
+        return [tool_name]  # 最后回退，可能仍会报错
 
     def strip_signature(self, apk_path, output_dir=None):
         """去除 APK 原有签名"""
@@ -74,7 +86,7 @@ class QuickSignReplacer:
 
         print(f"[+] zipalign 对齐: {input_apk}")
 
-        cmd = ['zipalign', '-p', '-f', '-v', '4', str(input_apk), str(output_apk)]
+        cmd = self._get_cmd('zipalign') + ['-p', '-f', '-v', '4', str(input_apk), str(output_apk)]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
@@ -99,8 +111,8 @@ class QuickSignReplacer:
 
         print(f"[+] 签名 APK: {apk_path}")
 
-        cmd = [
-            'apksigner', 'sign',
+        cmd = self._get_cmd('apksigner') + [
+            'sign',
             '--ks', str(keystore_path),
             '--ks-key-alias', alias,
             '--ks-pass', f'pass:{password}',
@@ -125,8 +137,8 @@ class QuickSignReplacer:
         print(f"[+] V1 签名 APK (jarsigner): {apk_path}")
         print(f"    ⚠️  V1 签名仅含 JAR 签名，Android 7.0+ 可能拒绝安装")
 
-        cmd = [
-            'jarsigner', '-verbose',
+        cmd = self._get_cmd('jarsigner') + [
+            '-verbose',
             '-sigalg', 'SHA256withRSA',
             '-digestalg', 'SHA-256',
             '-keystore', str(keystore_path),
@@ -149,8 +161,8 @@ class QuickSignReplacer:
         """生成测试密钥库"""
         print(f"[+] 生成测试密钥库: {keystore_path}")
 
-        cmd = [
-            'keytool', '-genkey', '-v',
+        cmd = self._get_cmd('keytool') + [
+            '-genkey', '-v',
             '-keystore', str(keystore_path),
             '-alias', alias,
             '-keyalg', 'RSA',

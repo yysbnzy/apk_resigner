@@ -534,7 +534,7 @@ class APKResignerGUI:
             work_dir = self.work_dir / "quick_sign"
             work_dir.mkdir(parents=True, exist_ok=True)
             
-            replacer = QuickSignReplacer(work_dir)
+            replacer = QuickSignReplacer(work_dir, tool_paths=self.tools.tool_paths)
             
             # 获取签名方案
             scheme = self.local_scheme_var.get() if hasattr(self, 'local_scheme_var') else "v2+v3+v4"
