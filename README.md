@@ -12,10 +12,12 @@
 - **备份还原**：导出原版 APK 备份，随时还原
 - **安全启动文件篡改**：按平台递归扫描烧录包，生成 S1/S2/S3 阶段验签故障注入文件，并内置串口日志 Pass/Finding 判定说明
 - **27 密钥换算**：支持 AES/DES/3DES/CMAC 的 27 01 → 27 02 换算，并按当前算法和 Key 生成 Windows x64 加密或解密 DLL
+- **串口调试工具**：首个页签集成串口收发、过滤、连续/循环发送和日志保存，下拉框同时显示 COM 口与设备描述
+- **原生浅色界面**：五个页签统一使用 Windows 原生浅色主题，初始窗口尺寸为 1300×800
 
 ## 版本信息
 
-- **当前版本**: v2.3.4
+- **当前版本**: v2.3.7
 - **最新更新**: 2026-11-27
 
 ## 文件说明
@@ -31,6 +33,8 @@
 | `install_manager.py` | APK 安装策略模块 |
 | `secure_boot_tamper.py` | 多平台安全启动文件扫描、篡改及日志判定模块 |
 | `seedkey_tool.py` | UDS 27 Seed&Key 换算及内置算法/Key 的 Windows x64 DLL 生成模块 |
+| `serial_tool.py` | 嵌入式串口调试页签、COM 口设备描述显示与原串口功能适配 |
+| `serial/` | pyserial 串口通信依赖 |
 | `build_portable.py` | 自动收集工具并打包为 EXE |
 | `build_portable.bat` | Windows 一键打包批处理 |
 | `_tools/` | 依赖工具目录（打包时自动包含） |
@@ -49,7 +53,7 @@ git clone https://github.com/yysbnzy/apk_resigner.git
 cd apk_resigner
 
 # 安装依赖
-pip install cryptography
+pip install cryptography pyserial
 
 # 运行 GUI
 python apk_resigner_gui.py
@@ -137,7 +141,7 @@ python build_portable.py
 可以！启用**纯 Python 模式**：
 - 无需 JDK/Android SDK
 - 仅支持 V1 (JAR) 签名
-- 需要 `pip install cryptography`
+- 需要 `pip install cryptography pyserial`
 
 ### Q: 为什么启动比较慢？
 单文件 EXE 启动时需要解压内置的 `_tools/` 到临时目录，首次启动约 5-10 秒。

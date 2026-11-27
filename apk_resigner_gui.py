@@ -51,6 +51,8 @@ except ImportError:
 from secure_boot_tamper import SecureBootTamperFrame
 # UDS 27 Seed&Key 换算及 DLL 生成模块
 from seedkey_tool import SeedKeyFrame
+# 串口调试工具（首个页签）
+from serial_tool import SerialToolFrame
 
 
 class ToolManager:
@@ -220,8 +222,8 @@ class ToolManager:
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 v2.3.4")
-        self.root.geometry("900x800")
+        self.root.title("APK 签名替换工具 v2.3.7")
+        self.root.geometry("1300x800")
         self.root.minsize(800, 700)
 
         self.work_dir = Path(os.path.expanduser("~")) / "apk_resign_work"
@@ -284,30 +286,35 @@ class APKResignerGUI:
             print(f"ADB 模块初始化失败: {e}")
 
     def build_ui(self):
-        """构建UI - 顶级页签: APK签名工具 / 证书扫描 / 安全启动文件篡改 / 27密钥换算"""
+        """构建UI - 串口调试工具 / APK签名工具 / 证书扫描 / 安全启动文件篡改 / 27密钥换算"""
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
         # 创建顶级Notebook
         self.top_notebook = ttk.Notebook(self.root)
         self.top_notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # ========== 第一页: 串口调试工具 ==========
+        serial_tool_tab = SerialToolFrame(self.top_notebook)
+        self.top_notebook.add(serial_tool_tab, text="串口调试工具")
+        self.serial_tool_tab = serial_tool_tab
         
-        # ========== 第一页: APK签名工具 ==========
+        # ========== 第二页: APK签名工具 ==========
         apk_tool_tab = ttk.Frame(self.top_notebook, padding="10")
         self.top_notebook.add(apk_tool_tab, text="APK签名工具")
         self._build_apk_tool_tab(apk_tool_tab)
         
-        # ========== 第二页: 证书扫描 ==========
+        # ========== 第三页: 证书扫描 ==========
         cert_scanner_tab = ttk.Frame(self.top_notebook, padding="10")
         self.top_notebook.add(cert_scanner_tab, text="证书扫描")
         self._build_cert_scanner_tab(cert_scanner_tab)
 
-        # ========== 第三页: 安全启动文件篡改 ==========
+        # ========== 第四页: 安全启动文件篡改 ==========
         secure_boot_tab = SecureBootTamperFrame(self.top_notebook)
         self.top_notebook.add(secure_boot_tab, text="安全启动文件篡改")
         self.secure_boot_tab = secure_boot_tab
 
-        # ========== 第四页: 27密钥换算 ==========
+        # ========== 第五页: 27密钥换算 ==========
         seedkey_tab = SeedKeyFrame(self.top_notebook)
         self.top_notebook.add(seedkey_tab, text="27密钥换算")
         self.seedkey_tab = seedkey_tab
@@ -324,7 +331,7 @@ class APKResignerGUI:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(6, weight=1)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.4", font=("Microsoft YaHei", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.7", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
         self.btn_help = ttk.Button(main_frame, text="使用说明", command=self.show_help, width=12)
@@ -2561,8 +2568,12 @@ def main():
         windll.shcore.SetProcessDpiAwareness(1)
     except:
         pass
+    # 使用 Windows 原生浅色主题，与串口调试工具的控件风格保持一致
     style = ttk.Style()
-    style.theme_use('clam')
+    for native_theme in ('vista', 'xpnative'):
+        if native_theme in style.theme_names():
+            style.theme_use(native_theme)
+            break
     app = APKResignerGUI(root)
     root.mainloop()
 
