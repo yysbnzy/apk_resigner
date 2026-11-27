@@ -47,6 +47,11 @@ except ImportError:
     PurePythonAPKSigner = None
     CRYPTO_AVAILABLE = False
 
+# 安全启动验签故障注入模块（仅使用 Python 标准库）
+from secure_boot_tamper import SecureBootTamperFrame
+# UDS 27 Seed&Key 换算及 DLL 生成模块
+from seedkey_tool import SeedKeyFrame
+
 
 class ToolManager:
     """管理工具路径，优先使用内置工具"""
@@ -215,7 +220,7 @@ class ToolManager:
 class APKResignerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("APK 签名替换工具 v2.3.1")
+        self.root.title("APK 签名替换工具 v2.3.4")
         self.root.geometry("900x800")
         self.root.minsize(800, 700)
 
@@ -279,7 +284,7 @@ class APKResignerGUI:
             print(f"ADB 模块初始化失败: {e}")
 
     def build_ui(self):
-        """构建UI - 顶级页签: APK签名工具 / 证书扫描"""
+        """构建UI - 顶级页签: APK签名工具 / 证书扫描 / 安全启动文件篡改 / 27密钥换算"""
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
@@ -296,6 +301,16 @@ class APKResignerGUI:
         cert_scanner_tab = ttk.Frame(self.top_notebook, padding="10")
         self.top_notebook.add(cert_scanner_tab, text="证书扫描")
         self._build_cert_scanner_tab(cert_scanner_tab)
+
+        # ========== 第三页: 安全启动文件篡改 ==========
+        secure_boot_tab = SecureBootTamperFrame(self.top_notebook)
+        self.top_notebook.add(secure_boot_tab, text="安全启动文件篡改")
+        self.secure_boot_tab = secure_boot_tab
+
+        # ========== 第四页: 27密钥换算 ==========
+        seedkey_tab = SeedKeyFrame(self.top_notebook)
+        self.top_notebook.add(seedkey_tab, text="27密钥换算")
+        self.seedkey_tab = seedkey_tab
         
         # 绑定顶级页签切换事件
         self.top_notebook.bind("<<NotebookTabChanged>>", self._on_top_notebook_changed)
@@ -309,7 +324,7 @@ class APKResignerGUI:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(6, weight=1)
 
-        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.1", font=("Microsoft YaHei", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="APK 签名替换工具 v2.3.4", font=("Microsoft YaHei", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
 
         self.btn_help = ttk.Button(main_frame, text="使用说明", command=self.show_help, width=12)
@@ -665,6 +680,8 @@ class APKResignerGUI:
                        value="third_party", command=self._switch_app_tab).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(ctrl_frame, text="系统预装", variable=self.app_tab_var,
                        value="system", command=self._switch_app_tab).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(ctrl_frame, text="德赛应用", variable=self.app_tab_var,
+                       value="desay", command=self._switch_app_tab).pack(side=tk.LEFT, padx=5)
 
         # 搜索框
         ttk.Label(ctrl_frame, text="搜索:").pack(side=tk.LEFT, padx=(20, 5))
@@ -1072,13 +1089,17 @@ class APKResignerGUI:
                 continue
             if filter_type == "third_party" and pkg.app_type != "THIRD_PARTY":
                 continue
+            if filter_type == "desay":
+                apk_path = pkg.apk_path.lower()
+                if '/sv' not in apk_path or not apk_path.endswith('.apk'):
+                    continue
             
             # 关键词过滤
             if keyword and keyword not in pkg.name.lower() and keyword not in pkg.apk_path.lower():
                 continue
             
             display_name = pkg.name.split('.')[-1] if pkg.name else ""
-            type_text = "系统" if pkg.app_type == "SYSTEM" else "第三方"
+            type_text = "德赛" if filter_type == "desay" else ("系统" if pkg.app_type == "SYSTEM" else "第三方")
             
             self.app_tree.insert('', tk.END, values=(
                 display_name, pkg.name, pkg.version, type_text, pkg.apk_path
@@ -1112,7 +1133,11 @@ class APKResignerGUI:
             self._adb_log(f"获取详情失败: {e}", "ERROR")
 
     def _export_only(self):
-        """仅导出 APK"""
+        """仅导出 APK；德赛应用模式批量导出全部 /sv 路径 APK。"""
+        if self.app_tab_var.get() == "desay":
+            self._export_sv_only()
+            return
+
         selection = self.app_tree.selection()
         if not selection:
             messagebox.showwarning("提示", "请先选择应用")
@@ -1133,6 +1158,38 @@ class APKResignerGUI:
                 messagebox.showerror("导出失败", result.error)
         except Exception as e:
             self._adb_log(f"导出异常: {e}", "ERROR")
+
+    def _export_sv_only(self):
+        """复用 Export_App 逻辑：批量导出路径包含 /sv 的全部 APK。"""
+        if not self.adb_manager or not self.adb_manager.selected_device:
+            messagebox.showwarning("提示", "请先连接设备")
+            return
+        output_dir = filedialog.askdirectory(title="选择 SV APK 导出目录", initialdir=str(self.work_dir))
+        if not output_dir:
+            return
+
+        self._adb_log("获取安装包列表：adb shell pm list packages -f")
+        try:
+            result = self.adb_manager.export_sv_apks(output_dir)
+            for path in result['local_paths']:
+                self._adb_log(f"SV APK 导出成功: {path}", "SUCCESS")
+            for error in result['errors']:
+                self._adb_log(f"SV APK 导出失败: {error}", "ERROR")
+
+            summary = (f"共找到 {result['total']} 个 SV APK。\n"
+                       f"成功 {result['success_count']} 个，失败 {result['fail_count']} 个。\n\n"
+                       f"目标目录：\n{result['output_dir']}")
+            if result['total'] == 0:
+                self._adb_log("未找到路径包含 /sv 且以 .apk 结尾的 APK", "WARNING")
+                messagebox.showinfo("结果", "未找到 SV 相关 APK")
+            elif result['fail_count']:
+                messagebox.showwarning("导出完成", summary)
+            else:
+                messagebox.showinfo("导出完成", summary)
+            self._adb_log(f"SV APK 导出完成：成功 {result['success_count']} 个，失败 {result['fail_count']} 个")
+        except Exception as e:
+            self._adb_log(f"SV APK 导出异常: {e}", "ERROR")
+            messagebox.showerror("导出失败", str(e))
 
     def _one_click_process(self):
         """一键处理：导出 → 备份 → 签名 → 安装"""

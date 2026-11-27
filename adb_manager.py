@@ -534,6 +534,49 @@ class ADBManager:
                 error=str(e)
             )
     
+    def export_sv_apks(self, output_dir: Union[str, Path]) -> Dict[str, object]:
+        """
+        批量导出德赛 SV APK。
+
+        与 Export_App 一致：通过 pm list packages -f 筛选路径包含 /sv
+        且以 .apk 结尾的条目，逐个 adb pull；单个失败不中断后续导出。
+        """
+        self._ensure_device_selected()
+        output_dir = Path(output_dir).expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        result = self._run(['shell', 'pm', 'list', 'packages', '-f'])
+        if result[0] != 0:
+            raise ADBError(f"获取包列表失败，请检查设备连接与权限: {result[2]}")
+
+        sv_apk_paths = []
+        for line in result[1].splitlines():
+            low = line.lower()
+            if '/sv' not in low or '.apk' not in low:
+                continue
+            remote_path = line.split('=', 1)[0].replace('package:', '', 1).strip()
+            if remote_path and remote_path.lower().endswith('.apk'):
+                sv_apk_paths.append(remote_path)
+
+        local_paths = []
+        errors = []
+        for remote_path in sv_apk_paths:
+            local_path = output_dir / os.path.basename(remote_path)
+            pull_result = self._run(['pull', remote_path, str(local_path)], timeout=120)
+            if pull_result[0] == 0:
+                local_paths.append(str(local_path))
+            else:
+                errors.append(f"{remote_path}: {pull_result[2] or pull_result[1]}")
+
+        return {
+            'output_dir': str(output_dir),
+            'total': len(sv_apk_paths),
+            'success_count': len(local_paths),
+            'fail_count': len(errors),
+            'local_paths': local_paths,
+            'errors': errors,
+        }
+
     def export_apk_simple(self, package_name: str, output_dir: Union[str, Path]) -> str:
             return ExportResult(
                 package=package_name,

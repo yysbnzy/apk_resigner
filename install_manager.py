@@ -237,7 +237,7 @@ class InstallManager:
         },
     }
     
-    def __init__(self, tools, logger=None):
+    def __init__(self, adb_manager, logger=None):
         """
         初始化安装管理器
         
